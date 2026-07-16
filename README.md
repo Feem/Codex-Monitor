@@ -18,8 +18,9 @@ Built by Kevin KE.
 
 - Draggable `Monitor` panel inside the Codex workspace.
 - Collapsed Monitor title shows the current session total token value, for example `Monitor (ttk:58.9M)`.
-- Per-response chip in the format `Token: Current ... | Total ...   Rounds: User ... | Assistant ...`.
+- Full-width per-response token line below the native action buttons, with wrapping for narrow windows.
 - Sidebar hover panel with session-level total, input, cached input, output, and reasoning tokens.
+- Automatic Chinese labels when the Codex interface language is Chinese; English is used for English and all other languages.
 - Token display unit switcher: raw, K, and M. The default unit is K.
 - Collapsed Monitor keeps the compact title and expand button while hiding unit controls.
 - Local-only operation through Chrome DevTools Protocol.
@@ -104,6 +105,11 @@ Codex Monitor injects temporary DOM elements into the active Codex renderer. Tha
 Use `./scripts/start_codex_monitor.sh 9222` for the automated path. It discovers either supported app bundle, relaunches it with a loopback-only DevTools port, and reconnects after renderer replacement. Use `./scripts/install_launch_agent.sh 9222` to keep this loop alive after login and app updates. The LaunchAgent waits while Codex is intentionally closed; after you open it normally, one brief relaunch may be required to add the DevTools flag. An active response can defer that relaunch until the next app start.
 
 ## Changelog
+
+### v0.3.1
+
+- Moved per-response token details below the native action buttons as a full-width wrapping line.
+- Added automatic Chinese and English UI labels based on the Codex interface language.
 
 ### v0.3.0
 

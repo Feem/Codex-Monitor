@@ -18,8 +18,9 @@ Codex Monitor 是一个本地只读的 Codex 监控浮层，同时支持当前�
 
 - 在 Codex Desktop 内显示可拖动的 `Monitor` 面板。
 - Monitor 收起时在标题里直接显示当前 session 总 token，例如 `Monitor (ttk:58.9M)`。
-- 在每条回复后显示 chip，格式为 `Token: Current ... | Total ...   Rounds：User ... | Assistant ...`。
+- 每条回复的原生操作按钮下方显示独立整行 Token 信息，窄窗口下可以自动换行。
 - 左侧会话列表 hover 面板显示当前 session 的 total、input、cached input、output 和 reasoning token。
+- Codex 界面语言为中文时自动使用中文标签；英语及其他语言统一使用英文。
 - token 单位支持 raw、K、M，默认使用 K。
 - Monitor 收起后只保留紧凑标题和展开按钮，隐藏单位切换控件。
 - 通过 Chrome DevTools Protocol 本地运行，不依赖远端服务。
@@ -104,6 +105,11 @@ Codex Monitor 注入的是临时 DOM 元素，这是有意设计的：它避免�
 自动化方式请使用 `./scripts/start_codex_monitor.sh 9222`。它会自动识别两个受支持的 App，用仅绑定本机的 DevTools 端口重新启动，并在 renderer 被替换后重连。使用 `./scripts/install_launch_agent.sh 9222` 可以让这个循环在登录后和客户端更新后持续运行。Codex 被用户主动关闭时 LaunchAgent 只等待；你普通启动客户端后，可能会短暂重启一次以补上 DevTools 参数。若当前正在生成回复，客户端可以把这次重启延后到下次启动。
 
 ## 更新日志
+
+### v0.3.1
+
+- 将每条回复的 Token 信息移动到原生操作按钮下方，使用可换行的独立整行布局。
+- 根据 Codex 界面语言自动切换中文或英文标签。
 
 ### v0.3.0
 

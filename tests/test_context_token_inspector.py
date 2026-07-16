@@ -565,7 +565,7 @@ class ContextTokenInspectorTests(unittest.TestCase):
         script = injector.INJECTION_SCRIPT
         bootstrap = script.split("installSidebarHoverDelegation();", 1)[1].split("installObserver(payload);", 1)[0]
 
-        self.assertIn("const RUNTIME_VERSION = 4;", script)
+        self.assertIn("const RUNTIME_VERSION = 5;", script)
         self.assertIn("if (!runtimeChanged) return;", script)
         self.assertIn("document.getElementById(ROOT_ID)?.remove();", script)
         self.assertIn("__codexContextTokenInspectorObserver?.disconnect", script)
@@ -598,10 +598,38 @@ class ContextTokenInspectorTests(unittest.TestCase):
             script,
         )
         self.assertIn("[data-assistant-message-sent-time]", script)
+        self.assertIn("function actionRowForAssistant(node)", script)
+        self.assertIn("actionRow.insertAdjacentElement('afterend', chip);", script)
         self.assertIn("node.appendChild(chip);", script)
+        self.assertNotIn("target.parentElement.appendChild(chip)", script)
         self.assertNotIn("node.insertAdjacentElement('afterbegin', chip)", script)
         self.assertIn("if (chip.textContent !== chipText)", script)
         self.assertIn("if (body.innerHTML !== bodyHtml)", script)
+
+    def test_reply_chip_uses_a_full_width_wrapping_row(self):
+        injector = load_injector()
+        script = injector.INJECTION_SCRIPT
+        chip_css = script.split(".cti-reply-chip {", 1)[1].split("}", 1)[0]
+
+        self.assertIn("display: block;", chip_css)
+        self.assertIn("width: 100%;", chip_css)
+        self.assertIn("max-width: 100%;", chip_css)
+        self.assertIn("white-space: normal;", chip_css)
+        self.assertIn("overflow-wrap: anywhere;", chip_css)
+        self.assertNotIn("text-overflow: ellipsis;", chip_css)
+
+    def test_injected_ui_localizes_chinese_and_falls_back_to_english(self):
+        injector = load_injector()
+        script = injector.INJECTION_SCRIPT
+
+        self.assertIn("document.documentElement.lang || navigator.language || 'en'", script)
+        self.assertIn("return language.startsWith('zh') ? 'zh' : 'en';", script)
+        self.assertIn("monitor: 'Monitor'", script)
+        self.assertIn("monitor: '监控'", script)
+        self.assertIn("sessionTotal: '会话总计'", script)
+        self.assertIn("madeBy: 'Kevin KE 制作'", script)
+        self.assertIn("credit.textContent = tr('madeBy');", script)
+        self.assertIn("const text = collapsed && total != null ? `${tr('monitor')}", script)
 
     def test_target_selection_prefers_codex_app_renderer(self):
         injector = load_injector()

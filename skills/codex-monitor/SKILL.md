@@ -40,6 +40,7 @@ This discovers either the current `ChatGPT.app` bundle or the legacy `Codex.app`
 The injector refreshes the session payload every 10 seconds by default while the in-page observer handles ordinary UI changes.
 For responsiveness, sidebar hover summaries cover the latest 100 sessions while per-message chip details are parsed for the latest 6 sessions by default. Use `--detail-limit` on `context_token_injector.py` if older sessions need chips.
 If the requested port is occupied, the scripts reuse it only when it owns a Codex renderer; otherwise they choose the next available local port.
+Injected labels use Chinese when the Codex interface language starts with `zh`; English is the fallback for every other language.
 
 ## Auto Start
 

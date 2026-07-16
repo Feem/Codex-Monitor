@@ -458,7 +458,7 @@ INJECTION_SCRIPT = r"""
 (payload => {
   // Bump this only when closures or event handlers change. A long-lived
   // renderer may still contain an observer from an older plugin release.
-  const RUNTIME_VERSION = 4;
+  const RUNTIME_VERSION = 5;
   const ROOT_ID = 'codex-context-token-inspector-root';
   const STYLE_ID = 'codex-context-token-inspector-style';
   const FOOTER_ATTR = 'data-context-token-footer';
@@ -472,6 +472,53 @@ INJECTION_SCRIPT = r"""
   const previousRuntimeVersion = window.__codexContextTokenInspectorRuntimeVersion;
   const runtimeChanged = previousRuntimeVersion !== RUNTIME_VERSION;
   window.__codexContextTokenInspectorRuntimeVersion = RUNTIME_VERSION;
+
+  const I18N = {
+    en: {
+      monitor: 'Monitor', tokenUnit: 'Token unit', rawUnit: 'raw',
+      expandMonitor: 'Expand Monitor', collapseMonitor: 'Collapse Monitor',
+      status: 'status', left: 'left', context: 'context', turn: 'turn', session: 'session',
+      inputShort: 'in', cachedShort: 'cached', outputShort: 'out', reasoningShort: 'reason',
+      sessionTotal: 'Session total', input: 'Input', cachedInput: 'Cached input',
+      output: 'Output', reasoning: 'Reasoning', token: 'Token', current: 'Current',
+      total: 'Total', rounds: 'Rounds', user: 'User', assistant: 'Assistant',
+      contextTitle: 'Context', turnTitle: 'Turn', sessionTitle: 'Session', tokens: 'tokens',
+      userRounds: 'User rounds', assistantRounds: 'Assistant rounds',
+      noRecords: 'No token records found.', madeBy: 'Made by Kevin KE',
+      unknown: 'UNKNOWN', high: 'HIGH', watch: 'WATCH', ok: 'OK',
+    },
+    zh: {
+      monitor: '监控', tokenUnit: 'Token 单位', rawUnit: '原值',
+      expandMonitor: '展开监控', collapseMonitor: '收起监控',
+      status: '状态', left: '剩余', context: '上下文', turn: '本轮', session: '会话',
+      inputShort: '输入', cachedShort: '缓存', outputShort: '输出', reasoningShort: '推理',
+      sessionTotal: '会话总计', input: '输入', cachedInput: '缓存输入',
+      output: '输出', reasoning: '推理', token: 'Token', current: '当前',
+      total: '总计', rounds: '轮次', user: '用户', assistant: '助手',
+      contextTitle: '上下文', turnTitle: '本轮', sessionTitle: '会话', tokens: 'Token',
+      userRounds: '用户轮次', assistantRounds: '助手轮次',
+      noRecords: '暂无 Token 记录。', madeBy: 'Kevin KE 制作',
+      unknown: '未知', high: '高', watch: '注意', ok: '正常',
+    },
+  };
+
+  function uiLanguage() {
+    const language = String(document.documentElement.lang || navigator.language || 'en').toLowerCase();
+    return language.startsWith('zh') ? 'zh' : 'en';
+  }
+  function tr(key) {
+    const language = uiLanguage();
+    return I18N[language][key] || I18N.en[key] || key;
+  }
+  function labeled(key, value) {
+    return uiLanguage() === 'zh' ? `${tr(key)}：${value}` : `${tr(key)}: ${value}`;
+  }
+  function parenthesized(value) {
+    return uiLanguage() === 'zh' ? `（${value}）` : `(${value})`;
+  }
+  function joined(values) {
+    return values.join(uiLanguage() === 'zh' ? '，' : ', ');
+  }
 
   function n(value) {
     return value == null ? '-' : new Intl.NumberFormat().format(value);
@@ -502,10 +549,10 @@ INJECTION_SCRIPT = r"""
     return typeof value === 'number' ? `${value.toFixed(1)}%` : '-';
   }
   function pressure(value) {
-    if (typeof value !== 'number') return 'UNKNOWN';
-    if (value >= 85) return 'HIGH';
-    if (value >= 70) return 'WATCH';
-    return 'OK';
+    if (typeof value !== 'number') return tr('unknown');
+    if (value >= 85) return tr('high');
+    if (value >= 70) return tr('watch');
+    return tr('ok');
   }
   function remainingContext(item) {
     if (typeof item?.latest_context_tokens !== 'number' || typeof item?.context_window !== 'number') return null;
@@ -513,11 +560,11 @@ INJECTION_SCRIPT = r"""
   }
   function summaryHover(item) {
     return [
-      `Session total  ${token(item.session_total_tokens)}`,
-      `Input          ${token(item.session_input_tokens)}`,
-      `Cached input   ${token(item.session_cached_input_tokens)}`,
-      `Output         ${token(item.session_output_tokens)}`,
-      `Reasoning      ${token(item.session_reasoning_tokens)}`,
+      labeled('sessionTotal', token(item.session_total_tokens)),
+      labeled('input', token(item.session_input_tokens)),
+      labeled('cachedInput', token(item.session_cached_input_tokens)),
+      labeled('output', token(item.session_output_tokens)),
+      labeled('reasoning', token(item.session_reasoning_tokens)),
     ].join('\n');
   }
   function itemChip(item, roundIndex, totalRounds) {
@@ -526,11 +573,12 @@ INJECTION_SCRIPT = r"""
     const userTotal = item.userTotalTurns;
     const assistantIndex = item.assistantTurnIndex || item.roundIndex || roundIndex;
     const assistantTotal = item.assistantTotalTurns || item.totalRounds || totalRounds;
-    const turnText = userIndex && userTotal
-      ? `Rounds：User ${userIndex}/${userTotal}  | Assistant ${assistantIndex}/${assistantTotal}`
-      : `Rounds：Assistant ${assistantIndex}/${assistantTotal}`;
-    return `Token: Current ${token(usage.latest_context_tokens)}/${token(usage.context_window)} (${pct(usage.latest_context_percent)}) | ` +
-      `Total ${token(usage.latest_turn_total_tokens)}/${token(usage.session_total_tokens)}   ${turnText}`;
+    const roundValues = userIndex && userTotal
+      ? `${tr('user')} ${userIndex}/${userTotal}  | ${tr('assistant')} ${assistantIndex}/${assistantTotal}`
+      : `${tr('assistant')} ${assistantIndex}/${assistantTotal}`;
+    const current = `${tr('current')} ${token(usage.latest_context_tokens)}/${token(usage.context_window)} ${parenthesized(pct(usage.latest_context_percent))}`;
+    return `${labeled('token', current)} | ${tr('total')} ${token(usage.latest_turn_total_tokens)}/${token(usage.session_total_tokens)}   ` +
+      labeled('rounds', roundValues);
   }
   function itemTitle(item, roundIndex, totalRounds) {
     const usage = item?.tokenUsage || {};
@@ -538,13 +586,18 @@ INJECTION_SCRIPT = r"""
     const userTotal = item.userTotalTurns;
     const assistantIndex = item.assistantTurnIndex || item.roundIndex || roundIndex;
     const assistantTotal = item.assistantTotalTurns || item.totalRounds || totalRounds;
+    const turnBreakdown = joined([
+      `${tr('inputShort')} ${token(usage.latest_turn_input_tokens)}`,
+      `${tr('outputShort')} ${token(usage.latest_turn_output_tokens)}`,
+      `${tr('reasoningShort')} ${token(usage.latest_turn_reasoning_tokens)}`,
+    ]);
     const lines = [
-      `Context: ${token(usage.latest_context_tokens)} / ${token(usage.context_window)} (${pct(usage.latest_context_percent)})`,
-      `Turn: ${token(usage.latest_turn_total_tokens)} tokens (in ${token(usage.latest_turn_input_tokens)}, out ${token(usage.latest_turn_output_tokens)}, reasoning ${token(usage.latest_turn_reasoning_tokens)})`,
-      `Session: ${token(usage.session_total_tokens)} tokens`,
+      labeled('contextTitle', `${token(usage.latest_context_tokens)} / ${token(usage.context_window)} ${parenthesized(pct(usage.latest_context_percent))}`),
+      labeled('turnTitle', `${token(usage.latest_turn_total_tokens)} ${tr('tokens')} ${parenthesized(turnBreakdown)}`),
+      labeled('sessionTitle', `${token(usage.session_total_tokens)} ${tr('tokens')}`),
     ];
-    if (userIndex && userTotal) lines.push(`User rounds: ${userIndex}/${userTotal}`);
-    lines.push(`Assistant rounds: ${assistantIndex}/${assistantTotal}`);
+    if (userIndex && userTotal) lines.push(labeled('userRounds', `${userIndex}/${userTotal}`));
+    lines.push(labeled('assistantRounds', `${assistantIndex}/${assistantTotal}`));
     return lines.join('\n');
   }
   function rowThreadId(row) {
@@ -695,18 +748,19 @@ INJECTION_SCRIPT = r"""
         overflow-wrap: anywhere;
       }
       .cti-reply-chip {
-        display: inline-flex;
-        align-items: center;
-        max-width: min(720px, 70vw);
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        padding: 2px 6px;
+        display: block;
+        box-sizing: border-box;
+        width: 100%;
+        max-width: 100%;
+        margin-top: 6px;
+        padding: 4px 7px;
         border: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
         border-radius: 6px;
         background: color-mix(in srgb, CanvasText 5%, transparent);
         color: color-mix(in srgb, CanvasText 62%, transparent);
         font: 11px/1.25 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        white-space: normal;
+        overflow-wrap: anywhere;
       }
       .cti-sidebar-tooltip {
         position: fixed;
@@ -737,8 +791,8 @@ INJECTION_SCRIPT = r"""
   }
   function cleanOriginalTitle(value) {
     return String(value || '')
-      .split(/\n{2,}(?=Context\s)/)[0]
-      .replace(/\n?Context\s+[\s\S]*$/m, '')
+      .split(/\n{2,}(?=(?:Context|上下文)\s)/)[0]
+      .replace(/\n?(?:Context|上下文)\s+[\s\S]*$/m, '')
       .trim();
   }
   function hideSidebarTooltip() {
@@ -748,11 +802,12 @@ INJECTION_SCRIPT = r"""
     hideSidebarTooltip();
     const tooltip = document.createElement('div');
     tooltip.className = 'cti-sidebar-tooltip';
+    tooltip.lang = uiLanguage() === 'zh' ? 'zh-CN' : 'en';
     const content = document.createElement('div');
     content.textContent = text;
     const credit = document.createElement('span');
     credit.className = 'cti-sidebar-credit';
-    credit.textContent = 'Made by Kevin KE';
+    credit.textContent = tr('madeBy');
     tooltip.append(content, credit);
     document.body.appendChild(tooltip);
     const rect = row.getBoundingClientRect();
@@ -763,19 +818,28 @@ INJECTION_SCRIPT = r"""
     tooltip.style.top = `${top}px`;
   }
   function installSidebarHoverDelegation() {
-    if (window.__codexContextTokenInspectorSidebarDelegation) return;
-    window.__codexContextTokenInspectorSidebarDelegation = true;
-    document.addEventListener('mouseover', event => {
+    const previous = window.__codexContextTokenInspectorSidebarDelegation;
+    if (previous?.version === RUNTIME_VERSION) return;
+    if (previous?.mouseover) document.removeEventListener('mouseover', previous.mouseover);
+    if (previous?.mouseout) document.removeEventListener('mouseout', previous.mouseout);
+    const mouseover = event => {
       const row = event.target?.closest?.(`[${SIDEBAR_HOVER_ATTR}]`);
       if (!row) return;
       setTimeout(() => showSidebarTooltip(row, row.getAttribute(SIDEBAR_HOVER_ATTR) || ''), 0);
-    });
-    document.addEventListener('mouseout', event => {
+    };
+    const mouseout = event => {
       const row = event.target?.closest?.(`[${SIDEBAR_HOVER_ATTR}]`);
       if (!row) return;
       if (event.relatedTarget && row.contains(event.relatedTarget)) return;
       setTimeout(hideSidebarTooltip, 0);
-    });
+    };
+    document.addEventListener('mouseover', mouseover);
+    document.addEventListener('mouseout', mouseout);
+    window.__codexContextTokenInspectorSidebarDelegation = {
+      version: RUNTIME_VERSION,
+      mouseover,
+      mouseout,
+    };
   }
   function applyStoredHudPosition(root) {
     try {
@@ -846,12 +910,27 @@ INJECTION_SCRIPT = r"""
       button.setAttribute('data-active', String(button.getAttribute('data-cti-unit') === unitMode()));
     });
   }
+  function updateHudLanguage(root) {
+    const language = uiLanguage();
+    const htmlLanguage = language === 'zh' ? 'zh-CN' : 'en';
+    if (root.lang !== htmlLanguage) root.lang = htmlLanguage;
+    const unitGroup = root.querySelector('.cti-unit-group');
+    if (unitGroup?.getAttribute('aria-label') !== tr('tokenUnit')) {
+      unitGroup?.setAttribute('aria-label', tr('tokenUnit'));
+    }
+    const rawButton = root.querySelector('[data-cti-unit="raw"]');
+    if (rawButton && rawButton.textContent !== tr('rawUnit')) rawButton.textContent = tr('rawUnit');
+    const toggle = root.querySelector('[data-cti-toggle]');
+    const toggleLabel = root.getAttribute('data-collapsed') === 'true' ? tr('expandMonitor') : tr('collapseMonitor');
+    if (toggle?.getAttribute('aria-label') !== toggleLabel) toggle?.setAttribute('aria-label', toggleLabel);
+  }
   function ensureHud() {
     let root = document.getElementById(ROOT_ID);
     if (root) {
       applyStoredHudPosition(root);
       installHudDrag(root);
       updateUnitButtons(root);
+      updateHudLanguage(root);
       return root;
     }
     root = document.createElement('section');
@@ -923,6 +1002,7 @@ INJECTION_SCRIPT = r"""
     applyStoredHudPosition(root);
     installHudDrag(root);
     updateUnitButtons(root);
+    updateHudLanguage(root);
     return root;
   }
   function applySidebar(summaries) {
@@ -965,18 +1045,19 @@ INJECTION_SCRIPT = r"""
     }
     return nodes.filter(node => !node.closest(`#${ROOT_ID}`));
   }
-  function metadataTargetForAssistant(node) {
+  function actionRowForAssistant(node) {
     const turn = node.closest('[data-turn-key], [data-chatgpt-conversation-turn="true"]') || node;
     const sentTime = turn.querySelector('[data-assistant-message-sent-time]');
-    if (sentTime) return sentTime;
+    if (sentTime?.parentElement) return sentTime.parentElement;
     const candidates = Array.from(turn.querySelectorAll('span, div')).filter(el => {
       if (el.closest(`#${ROOT_ID}`) || el.hasAttribute(CHIP_ATTR)) return false;
       const text = (el.textContent || '').trim();
       return /^Work(?:ing|ed) for /.test(text) || /\b\d{1,2}:\d{2}\s?(?:AM|PM)\b/.test(text);
     });
-    return candidates.find(el => /^Work(?:ing|ed) for /.test((el.textContent || '').trim())) ||
+    const candidate = candidates.find(el => /^Work(?:ing|ed) for /.test((el.textContent || '').trim())) ||
       candidates.find(el => /\b\d{1,2}:\d{2}\s?(?:AM|PM)\b/.test((el.textContent || '').trim())) ||
       null;
+    return candidate?.parentElement || null;
   }
   function normalizedText(value) {
     return String(value || '')
@@ -1121,22 +1202,22 @@ INJECTION_SCRIPT = r"""
       const sessionRound = item.roundIndex || index + 1;
       const sessionTotalRounds = item.totalRounds || items.length || nodes.length;
       const chipText = itemChip(item, sessionRound, sessionTotalRounds);
-      const target = metadataTargetForAssistant(node);
-      let chip = null;
-      if (target) {
-        chip = target.parentElement?.querySelector(`:scope > [${CHIP_ATTR}]`) || null;
-      } else {
-        chip = node.querySelector(`:scope > [${CHIP_ATTR}]`);
-      }
+      const actionRow = actionRowForAssistant(node);
+      let chip = node.querySelector(`[${CHIP_ATTR}]`);
       if (!chip) {
-        chip = document.createElement('span');
+        chip = document.createElement('div');
         chip.className = 'cti-reply-chip';
         chip.setAttribute(CHIP_ATTR, 'true');
-        if (target?.parentElement) {
-          target.parentElement.appendChild(chip);
-        } else {
-          node.appendChild(chip);
+      }
+      chip.lang = uiLanguage() === 'zh' ? 'zh-CN' : 'en';
+      if (actionRow?.parentElement) {
+        // Keep Codex's fixed-height action row untouched. The chip is a sibling
+        // immediately below it, so buttons and timestamps retain their layout.
+        if (chip.parentElement !== actionRow.parentElement || chip.previousElementSibling !== actionRow) {
+          actionRow.insertAdjacentElement('afterend', chip);
         }
+      } else if (chip.parentElement !== node) {
+        node.appendChild(chip);
       }
       if (chip.textContent !== chipText) chip.textContent = chipText;
       const title = itemTitle(item, sessionRound, sessionTotalRounds);
@@ -1146,6 +1227,7 @@ INJECTION_SCRIPT = r"""
   function applyHud(payload, currentDetail = null) {
     const root = ensureHud();
     const body = root.querySelector('[data-cti-body]');
+    updateHudTitle(root);
     const currentThreadId = currentDetail?.thread_id || activeThreadId() || payload.activeThreadId || null;
     const summaryForThread = threadId => {
       if (!threadId) return null;
@@ -1161,19 +1243,31 @@ INJECTION_SCRIPT = r"""
       root.__ctiSelectedSummary ||
       ((payload.summaries || []).length === 1 ? payload.summaries[0] : null);
     if (!selected) {
-      if (body.textContent !== 'No token records found.') body.textContent = 'No token records found.';
+      if (body.textContent !== tr('noRecords')) body.textContent = tr('noRecords');
       return;
     }
     root.__ctiSelectedThreadId = selected.thread_id;
     root.__ctiSelectedSummary = selected;
     root.__ctiSessionTotalTokens = selected.session_total_tokens;
     updateHudTitle(root);
+    const turnBreakdown = joined([
+      `${tr('inputShort')} ${token(selected.latest_turn_input_tokens)}`,
+      `${tr('cachedShort')} ${token(selected.latest_turn_cached_input_tokens)}`,
+      `${tr('outputShort')} ${token(selected.latest_turn_output_tokens)}`,
+      `${tr('reasoningShort')} ${token(selected.latest_turn_reasoning_tokens)}`,
+    ]);
+    const sessionBreakdown = joined([
+      `${tr('inputShort')} ${token(selected.session_input_tokens)}`,
+      `${tr('cachedShort')} ${token(selected.session_cached_input_tokens)}`,
+      `${tr('outputShort')} ${token(selected.session_output_tokens)}`,
+      `${tr('reasoningShort')} ${token(selected.session_reasoning_tokens)}`,
+    ]);
     const bodyHtml = `
-      <div>status: ${pressure(selected.latest_context_percent)} | left ${token(remainingContext(selected))}</div>
-      <div>context: ${token(selected.latest_context_tokens)} / ${token(selected.context_window)} (${pct(selected.latest_context_percent)})</div>
-      <div>turn: ${token(selected.latest_turn_total_tokens)} (in ${token(selected.latest_turn_input_tokens)}, cached ${token(selected.latest_turn_cached_input_tokens)}, out ${token(selected.latest_turn_output_tokens)}, reason ${token(selected.latest_turn_reasoning_tokens)})</div>
-      <div>session: ${token(selected.session_total_tokens)} (in ${token(selected.session_input_tokens)}, cached ${token(selected.session_cached_input_tokens)}, out ${token(selected.session_output_tokens)}, reason ${token(selected.session_reasoning_tokens)})</div>
-      <div class="cti-credit">Made by Kevin KE</div>
+      <div>${labeled('status', `${pressure(selected.latest_context_percent)} | ${tr('left')} ${token(remainingContext(selected))}`)}</div>
+      <div>${labeled('context', `${token(selected.latest_context_tokens)} / ${token(selected.context_window)} ${parenthesized(pct(selected.latest_context_percent))}`)}</div>
+      <div>${labeled('turn', `${token(selected.latest_turn_total_tokens)} ${parenthesized(turnBreakdown)}`)}</div>
+      <div>${labeled('session', `${token(selected.session_total_tokens)} ${parenthesized(sessionBreakdown)}`)}</div>
+      <div class="cti-credit">${tr('madeBy')}</div>
     `;
     if (body.innerHTML !== bodyHtml) body.innerHTML = bodyHtml;
     const toggle = root.querySelector('[data-cti-toggle]');
@@ -1185,8 +1279,9 @@ INJECTION_SCRIPT = r"""
     if (!title) return;
     const collapsed = root.getAttribute('data-collapsed') === 'true';
     const total = root.__ctiSessionTotalTokens;
-    const text = collapsed && total != null ? `Monitor (ttk:${token(total)})` : 'Monitor';
+    const text = collapsed && total != null ? `${tr('monitor')} (ttk:${token(total)})` : tr('monitor');
     if (title.textContent !== text) title.textContent = text;
+    updateHudLanguage(root);
   }
   function clearFooters() {
     document.querySelectorAll(`[${FOOTER_ATTR}]`).forEach(node => node.remove());
@@ -1280,6 +1375,7 @@ INJECTION_SCRIPT = r"""
     if (!runtimeChanged) return;
     window.__codexContextTokenInspectorObserver?.disconnect();
     window.__codexContextTokenInspectorObserver = null;
+    hideSidebarTooltip();
     if (window.__codexContextTokenInspectorDetailTimer) {
       clearTimeout(window.__codexContextTokenInspectorDetailTimer);
       window.__codexContextTokenInspectorDetailTimer = null;
