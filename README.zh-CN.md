@@ -103,7 +103,12 @@ Codex Monitor 注入的是临时 DOM 元素，这是有意设计的：它避免�
 
 自动化方式请使用 `./scripts/start_codex_monitor.sh 9222`。它会自动识别两个受支持的 App，用仅绑定本机的 DevTools 端口重新启动，并在 renderer 被替换后重连。使用 `./scripts/install_launch_agent.sh 9222` 可以让这个循环在登录后和客户端更新后持续运行。Codex 被用户主动关闭时 LaunchAgent 只等待；你普通启动客户端后，可能会短暂重启一次以补上 DevTools 参数。若当前正在生成回复，客户端可以把这次重启延后到下次启动。
 
-`0.3.0` 已在 `ChatGPT.app` `26.707.72221`（build `5307`）完成验证。该版本新增对集成在 `ChatGPT.app` 中的 Codex 支持，保留旧版独立 `Codex.app` 兼容，并同时识别 Codex task turn 与 `data-chatgpt-conversation-turn` 消息结构；同时会区分主窗口与 avatar overlay 等工具 renderer、在 Monitor 升级后自动迁移页面里的旧 observer，并在快速切换时依据任务明确的 `true`/`false` active 状态更新统计。
+## 更新日志
+
+### v0.3.0
+
+- 支持当前新版 ChatGPT 桌面客户端中的 Codex，已在 `ChatGPT.app` `26.707.72221`（build `5307`）完成验证，并继续兼容旧版独立 Codex 客户端。
+- 优化会话切换和数据刷新性能，通过更可靠的当前任务识别、增量解析和稳定的界面更新减少卡顿。
 
 ## Codex 插件
 

@@ -103,7 +103,12 @@ Codex Monitor injects temporary DOM elements into the active Codex renderer. Tha
 
 Use `./scripts/start_codex_monitor.sh 9222` for the automated path. It discovers either supported app bundle, relaunches it with a loopback-only DevTools port, and reconnects after renderer replacement. Use `./scripts/install_launch_agent.sh 9222` to keep this loop alive after login and app updates. The LaunchAgent waits while Codex is intentionally closed; after you open it normally, one brief relaunch may be required to add the DevTools flag. An active response can defer that relaunch until the next app start.
 
-Version `0.3.0` was verified with `ChatGPT.app` `26.707.72221` (build `5307`). It adds support for Codex integrated into `ChatGPT.app`, keeps compatibility with the standalone `Codex.app`, and supports both Codex task turns and `data-chatgpt-conversation-turn` message wrappers. It also distinguishes the main window from utility renderers such as the avatar overlay, migrates stale in-page observers after a Monitor upgrade, and follows the active task's explicit `true`/`false` state during fast switches.
+## Changelog
+
+### v0.3.0
+
+- Added support for Codex in the current ChatGPT desktop client, verified with `ChatGPT.app` `26.707.72221` (build `5307`), while retaining compatibility with the standalone Codex app.
+- Improved session-switching and refresh performance through more reliable active-task detection, incremental session parsing, and stable UI updates.
 
 ## Codex Plugin
 
