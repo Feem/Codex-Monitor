@@ -83,6 +83,22 @@ class ContextTokenInspectorTests(unittest.TestCase):
         self.assertEqual(summary["session_total_tokens"], 64016)
         self.assertEqual(summary["latest_turn_total_tokens"], 40416)
 
+    def test_zero_context_is_reported_as_zero_percent(self):
+        module = load_module()
+
+        self.assertEqual(module.pct(0, 258400), 0.0)
+
+    def test_thread_id_fallback_keeps_complete_uuid(self):
+        module = load_module()
+        path = pathlib.Path(
+            "rollout-2026-07-15T13-00-25-019f6425-c770-7c13-951a-46e380cd5dfd.jsonl"
+        )
+
+        self.assertEqual(
+            module.infer_thread_id(path),
+            "019f6425-c770-7c13-951a-46e380cd5dfd",
+        )
+
     def test_formats_reply_footer_line(self):
         module = load_module()
         summary = {
@@ -549,20 +565,199 @@ class ContextTokenInspectorTests(unittest.TestCase):
         script = injector.INJECTION_SCRIPT
         bootstrap = script.split("installSidebarHoverDelegation();", 1)[1].split("installObserver(payload);", 1)[0]
 
-        self.assertNotIn("document.getElementById(ROOT_ID)?.remove()", script)
-        self.assertNotIn("__codexContextTokenInspectorObserver?.disconnect", script)
+        self.assertIn("const RUNTIME_VERSION = 4;", script)
+        self.assertIn("if (!runtimeChanged) return;", script)
+        self.assertIn("document.getElementById(ROOT_ID)?.remove();", script)
+        self.assertIn("__codexContextTokenInspectorObserver?.disconnect", script)
         self.assertNotIn("querySelectorAll(`[${BADGE_ATTR}]`).forEach(node => node.remove())", bootstrap)
         self.assertNotIn("querySelectorAll(`[${FOOTER_ATTR}]`).forEach(node => node.remove())", bootstrap)
         self.assertNotIn("querySelectorAll(`[${CHIP_ATTR}]`).forEach(node => node.remove())", bootstrap)
 
-    def test_apply_all_prefers_visible_detail_for_hud(self):
+    def test_apply_all_prefers_active_session_detail_for_hud(self):
         injector = load_injector()
         script = injector.INJECTION_SCRIPT
         apply_all = script.split("function applyAll(payload)", 1)[1].split("function installObserver(payload)", 1)[0]
 
-        self.assertIn("const currentDetail = detailForVisiblePage(payload) || detailForCurrentThread(payload);", apply_all)
+        self.assertIn("const currentDetail = detailForCurrentThread(payload) || detailForVisiblePage(payload);", apply_all)
         self.assertIn("applyHud(payload, currentDetail);", apply_all)
         self.assertNotIn("applyHud(payload, detailForCurrentThread(payload));", apply_all)
+
+    def test_injection_supports_integrated_chatgpt_turns_without_rewriting_stable_dom(self):
+        injector = load_injector()
+        script = injector.INJECTION_SCRIPT
+
+        self.assertIn('[data-chatgpt-conversation-turn="true"]', script)
+        self.assertIn('data-app-action-sidebar-thread-active="true"', script)
+        self.assertIn('aria-current="page"', script)
+        self.assertIn("activeChanged ? 80 : 300", script)
+        self.assertIn("attributeFilter: ['data-app-action-sidebar-thread-active', 'aria-current']", script)
+        self.assertNotIn("row.__ctiSidebarHoverInstalled", script)
+        self.assertNotIn(
+            "document.querySelector('[data-app-action-sidebar-thread-row][data-app-action-sidebar-thread-active]') ||\n"
+            "      document.querySelector('[data-app-action-sidebar-thread-active]')",
+            script,
+        )
+        self.assertIn("[data-assistant-message-sent-time]", script)
+        self.assertIn("node.appendChild(chip);", script)
+        self.assertNotIn("node.insertAdjacentElement('afterbegin', chip)", script)
+        self.assertIn("if (chip.textContent !== chipText)", script)
+        self.assertIn("if (body.innerHTML !== bodyHtml)", script)
+
+    def test_target_selection_prefers_codex_app_renderer(self):
+        injector = load_injector()
+        targets = [
+            {
+                "type": "page",
+                "title": "Utility",
+                "url": "https://example.test",
+                "webSocketDebuggerUrl": "ws://127.0.0.1/utility",
+            },
+            {
+                "type": "page",
+                "title": "ChatGPT",
+                "url": "app://codex/index.html",
+                "webSocketDebuggerUrl": "ws://127.0.0.1/codex",
+            },
+        ]
+
+        selected = injector.select_target(targets)
+
+        self.assertEqual(selected["webSocketDebuggerUrl"], "ws://127.0.0.1/codex")
+
+    def test_target_selection_avoids_integrated_avatar_overlay(self):
+        injector = load_injector()
+        targets = [
+            {
+                "type": "page",
+                "title": "ChatGPT",
+                "url": "app://-/index.html?initialRoute=%2Favatar-overlay",
+                "webSocketDebuggerUrl": "ws://127.0.0.1/avatar",
+            },
+            {
+                "type": "page",
+                "title": "ChatGPT",
+                "url": "app://-/index.html",
+                "webSocketDebuggerUrl": "ws://127.0.0.1/main",
+            },
+        ]
+
+        selected = injector.select_target(targets)
+
+        self.assertEqual(selected["webSocketDebuggerUrl"], "ws://127.0.0.1/main")
+
+    def test_target_selection_rejects_foreign_devtools_pages(self):
+        injector = load_injector()
+        targets = [
+            {
+                "type": "page",
+                "title": "Example",
+                "url": "https://example.test",
+                "webSocketDebuggerUrl": "ws://127.0.0.1/example",
+            }
+        ]
+
+        with self.assertRaises(injector.CDPError):
+            injector.select_target(targets)
+
+    def test_injector_accepts_quiet_mode(self):
+        injector = load_injector()
+        args = injector.build_arg_parser().parse_args(["--quiet"])
+
+        self.assertTrue(args.quiet)
+
+    def test_detail_cache_reuses_unchanged_session_and_extends_on_append(self):
+        injector = load_injector()
+        session = self.write_session(
+            [
+                {
+                    "timestamp": "2026-05-22T06:06:02.814Z",
+                    "type": "session_meta",
+                    "payload": {"id": "019e4e4a-demo"},
+                }
+            ]
+        )
+        summary = {"path": str(session), "thread_id": "019e4e4a-demo"}
+
+        first = injector.cached_session_detail(str(session), summary)
+        second = injector.cached_session_detail(str(session), summary)
+        with session.open("a", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "timestamp": "later",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "user",
+                            "content": [{"type": "input_text", "text": "next turn"}],
+                        },
+                    }
+                )
+                + "\n"
+            )
+        third = injector.cached_session_detail(str(session), summary)
+
+        self.assertIs(first, second)
+        self.assertIs(second, third)
+        self.assertEqual(third["_current_turn_index"], 1)
+
+    def test_incremental_detail_matches_full_parse(self):
+        injector = load_injector()
+        session = self.write_session(
+            [
+                {
+                    "timestamp": "2026-05-22T06:00:00.000Z",
+                    "type": "session_meta",
+                    "payload": {"id": "019e4e4a-demo"},
+                },
+                {
+                    "timestamp": "2026-05-22T06:01:00.000Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "first"}],
+                    },
+                },
+            ]
+        )
+        summary = {"path": str(session), "thread_id": "019e4e4a-demo"}
+        injector.cached_session_detail(str(session), summary)
+        appended = [
+            {
+                "timestamp": "2026-05-22T06:01:01.000Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "reply"}],
+                },
+            },
+            {
+                "timestamp": "2026-05-22T06:01:02.000Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {"total_tokens": 200},
+                        "last_token_usage": {"input_tokens": 100, "total_tokens": 120},
+                        "model_context_window": 1000,
+                    },
+                },
+            },
+        ]
+        with session.open("a", encoding="utf-8") as handle:
+            for row in appended:
+                handle.write(json.dumps(row) + "\n")
+
+        incremental = injector.cached_session_detail(str(session), summary)
+        full = injector.inspector.parse_session_detail(str(session), summary=summary)
+
+        self.assertEqual(incremental["messages"], full["messages"])
+        self.assertEqual(
+            incremental["_current_turn_index"],
+            full["_current_turn_index"],
+        )
 
 
 if __name__ == "__main__":

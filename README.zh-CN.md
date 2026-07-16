@@ -4,7 +4,7 @@
 
 [English](README.md) | 中文
 
-Codex Monitor 是一个本地只读的 Codex Desktop 监控浮层。它可以在现有 Codex 窗口中显示 context window 使用情况和 token 消耗，不修改客户端安装包，也不会把本地会话数据复制进仓库。
+Codex Monitor 是一个本地只读的 Codex 监控浮层，同时支持当前集成在 ChatGPT 桌面客户端里的 Codex 和旧版独立 Codex Desktop。它可以在现有窗口中显示 context window 使用情况和 token 消耗，不修改客户端安装包，也不会把本地会话数据复制进仓库。
 
 ![Codex Monitor demo](assets/codex-monitor-demo.svg)
 
@@ -23,6 +23,8 @@ Codex Monitor 是一个本地只读的 Codex Desktop 监控浮层。它可以在
 - token 单位支持 raw、K、M，默认使用 K。
 - Monitor 收起后只保留紧凑标题和展开按钮，隐藏单位切换控件。
 - 通过 Chrome DevTools Protocol 本地运行，不依赖远端服务。
+- 自动识别当前 `/Applications/ChatGPT.app` 和旧版 `/Applications/Codex.app`。
+- 同时兼容 Codex task turn 与集成版 ChatGPT conversation turn 的消息节点。
 
 ## 安装
 
@@ -63,8 +65,9 @@ LaunchAgent 会在 Codex 关闭时等待，不会在用户正常退出 Codex 后
 
 这是推荐方式。脚本会用本地 DevTools 端口打开 Codex，并持续运行 injector；当 Codex renderer 重启后，浮层会自动恢复。
 injector 默认每 10 秒刷新一次 session payload；普通的页面切换和 DOM 更新由页面内 observer 处理。
-为了减少卡顿，侧边栏 hover 的 summary 默认覆盖最近 100 个 session；每条消息后的 chip 详情默认只解析最近 12 个 session。如需给更早的 session 显示 chip，可以直接运行 `context_token_injector.py` 并设置 `--detail-limit`。
-如果请求的端口被占用，脚本会自动切到下一个可用的本地端口。
+为了减少卡顿，侧边栏 hover 的 summary 默认覆盖最近 100 个 session；每条消息后的 chip 详情默认只解析最近 6 个 session。如需给更早的 session 显示 chip，可以直接运行 `context_token_injector.py` 并设置 `--detail-limit`。
+长会话详情会保留缓存，后续只解析 JSONL 新追加的行，不会每次刷新都从头读取整个会话。
+如果请求的端口被占用，脚本只会在该端口确实属于 Codex renderer 时复用；否则自动切到下一个可用的本地端口。
 
 安装 macOS LaunchAgent，让 Monitor 在登录后、Codex 重启后、Codex 更新后自动拉起：
 
@@ -96,9 +99,11 @@ Codex 重启后需要重新运行。当前页面保持打开时，已注入的 U
 
 ## Codex 客户端升级处理
 
-Codex Monitor 注入的是临时 DOM 元素，这是有意设计的：它避免修改 `Codex.app` 或客户端资源。如果 Codex Desktop 升级、重启或替换 renderer，已注入的 UI 会消失，需要重新注入。
+Codex Monitor 注入的是临时 DOM 元素，这是有意设计的：它避免修改 `ChatGPT.app`、`Codex.app` 或客户端资源。如果桌面客户端升级、重启或替换 renderer，已注入的 UI 会消失，需要重新注入。
 
-自动化方式请使用 `./scripts/start_codex_monitor.sh 9222`。它会用 DevTools 端口重新启动 Codex，并循环运行 injector；当 DevTools endpoint 消失时，会重新打开并注入。使用 `./scripts/install_launch_agent.sh 9222` 可以让这个循环在登录后、Codex 重启后、Codex 更新后持续自动拉起。LaunchAgent 会传入 `--no-reopen-after-quit`，因此 Codex 被用户主动关闭时它只等待，等你再次打开 Codex 后再恢复注入。如果未来 Codex 改动了侧边栏行或 assistant 消息的 DOM anchor，Monitor 仍然能读取 token 数据，但 chip 挂载位置可能需要更新 selector。
+自动化方式请使用 `./scripts/start_codex_monitor.sh 9222`。它会自动识别两个受支持的 App，用仅绑定本机的 DevTools 端口重新启动，并在 renderer 被替换后重连。使用 `./scripts/install_launch_agent.sh 9222` 可以让这个循环在登录后和客户端更新后持续运行。Codex 被用户主动关闭时 LaunchAgent 只等待；你普通启动客户端后，可能会短暂重启一次以补上 DevTools 参数。若当前正在生成回复，客户端可以把这次重启延后到下次启动。
+
+`0.3.0` 已在 `ChatGPT.app` `26.707.72221`（build `5307`）完成验证。该版本新增对集成在 `ChatGPT.app` 中的 Codex 支持，保留旧版独立 `Codex.app` 兼容，并同时识别 Codex task turn 与 `data-chatgpt-conversation-turn` 消息结构；同时会区分主窗口与 avatar overlay 等工具 renderer、在 Monitor 升级后自动迁移页面里的旧 observer，并在快速切换时依据任务明确的 `true`/`false` active 状态更新统计。
 
 ## Codex 插件
 
@@ -141,6 +146,7 @@ python3 ./scripts/context_token_inspector.py --limit 20 --format table
 
 Codex Monitor 不会修改：
 
+- `ChatGPT.app`
 - `Codex.app`
 - `app.asar`
 - Codex 会话 JSONL 文件
@@ -151,7 +157,7 @@ Codex Monitor 不会修改：
 ## 测试
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 python3 ./tests/test_context_token_inspector.py
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
 ```
 
 ## 仓库隐私

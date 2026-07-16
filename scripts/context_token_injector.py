@@ -32,7 +32,9 @@ import context_token_inspector as inspector
 
 DEFAULT_PORT = 9222
 ASSISTANT_DETAIL_ITEM_LIMIT = 40
-DETAIL_SESSION_LIMIT = 12
+DETAIL_SESSION_LIMIT = 6
+DETAIL_CACHE_LIMIT = 24
+_DETAIL_CACHE: dict[str, tuple[int, int, dict[str, Any]]] = {}
 
 
 class CDPError(RuntimeError):
@@ -123,12 +125,16 @@ class CDPClient:
                 data = json.loads(payload.decode("utf-8"))
                 if isinstance(data, dict):
                     return data
+            if opcode == 9:
+                # Chromium may ping long-lived CDP clients. A masked pong keeps
+                # the connection alive across normal ten-second refresh gaps.
+                self.sock.sendall(masked_websocket_frame(payload, opcode=10))
             if opcode == 8:
                 raise CDPError("WebSocket closed by target")
 
 
-def masked_websocket_frame(payload: bytes) -> bytes:
-    header = bytearray([0x81])
+def masked_websocket_frame(payload: bytes, opcode: int = 1) -> bytes:
+    header = bytearray([0x80 | (opcode & 0x0F)])
     length = len(payload)
     if length < 126:
         header.append(0x80 | length)
@@ -174,36 +180,75 @@ def devtools_targets(port: int) -> list[dict[str, Any]]:
     try:
         with urllib.request.urlopen(url, timeout=2) as response:
             data = json.loads(response.read().decode("utf-8"))
-    except urllib.error.URLError as exc:
+    except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
         raise CDPError(
-            f"Cannot connect to Codex DevTools on 127.0.0.1:{port}. "
-            "Launch Codex with --remote-debugging-port first."
+            f"Cannot connect to the Codex renderer on 127.0.0.1:{port}. "
+            "Launch ChatGPT or Codex with --remote-debugging-port first."
         ) from exc
     return data if isinstance(data, list) else []
 
 
 def select_target(targets: list[dict[str, Any]]) -> dict[str, Any]:
-    pages = [target for target in targets if target.get("type") == "page"]
-    codex_pages = [
+    pages = [
         target
-        for target in pages
-        if "Codex" in str(target.get("title") or "")
-        or str(target.get("url") or "").startswith("app://")
+        for target in targets
+        if target.get("type") == "page"
+        and is_codex_renderer_target(target)
+        and target_score(target) > 0
     ]
-    candidates = codex_pages or pages
+    candidates = sorted(pages, key=target_score, reverse=True)
     for target in candidates:
         if target.get("webSocketDebuggerUrl"):
             return target
     raise CDPError("No debuggable Codex renderer target found")
 
 
+def is_codex_renderer_target(target: dict[str, Any]) -> bool:
+    title = str(target.get("title") or "").lower()
+    url = str(target.get("url") or "").lower()
+    return url.startswith("app://") and (
+        "codex" in title
+        or "chatgpt" in title
+        or url.startswith("app://codex/")
+        or url.startswith("app://-/index.html")
+    )
+
+
+def target_score(target: dict[str, Any]) -> int:
+    title = str(target.get("title") or "").lower()
+    url = str(target.get("url") or "").lower()
+    decoded_url = urllib.parse.unquote(url)
+    score = 0
+    if url.startswith("app://"):
+        score += 100
+    # ChatGPT.app exposes utility pages (for example the avatar overlay) on the
+    # same CDP endpoint as the main Codex window. Always prefer the un-routed
+    # index page so the monitor is not injected into an invisible utility view.
+    if url in {"app://-/index.html", "app://codex/index.html"}:
+        score += 200
+    if "initialroute=" in decoded_url:
+        score -= 100
+    if "avatar-overlay" in decoded_url:
+        score -= 300
+    if "codex" in title or "codex" in url:
+        score += 40
+    if "chatgpt" in title:
+        score += 30
+    return score
+
+
 def runtime_state(client: CDPClient) -> dict[str, Any]:
     expression = r"""
 (() => {
   function attr(el, name) { return el && el.getAttribute ? el.getAttribute(name) : null; }
+  function activeSidebarRow() {
+    return document.querySelector('[data-app-action-sidebar-thread-row][data-app-action-sidebar-thread-active="true"]') ||
+      document.querySelector('[data-app-action-sidebar-thread-row][aria-current="page"]') ||
+      document.querySelector('[data-app-action-sidebar-thread-active="true"]') ||
+      document.querySelector('[data-app-action-sidebar-thread-row][data-app-action-sidebar-thread-active]:not([data-app-action-sidebar-thread-active="false"])');
+  }
   const activeRow =
-    document.querySelector('[data-app-action-sidebar-thread-row][data-app-action-sidebar-thread-active]') ||
-    document.querySelector('[data-app-action-sidebar-thread-active]');
+    activeSidebarRow();
   const activeId =
     attr(activeRow, 'data-app-action-sidebar-thread-id') ||
     attr(activeRow && activeRow.querySelector('[data-app-action-sidebar-thread-id]'), 'data-app-action-sidebar-thread-id') ||
@@ -283,7 +328,7 @@ def build_payload(
     for summary in detail_summaries:
         if not summary.get("path"):
             continue
-        parsed = inspector.parse_session_detail(str(summary["path"]))
+        parsed = cached_session_detail(str(summary["path"]), summary)
         assistant_token_messages = [
             message
             for message in parsed.get("messages", [])
@@ -345,6 +390,31 @@ def build_payload(
     }
 
 
+def cached_session_detail(path: str, summary: dict[str, Any]) -> dict[str, Any]:
+    try:
+        stat = Path(path).stat()
+        signature = (stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        return inspector.parse_session_detail(path, summary=summary)
+
+    cached = _DETAIL_CACHE.get(path)
+    if cached:
+        cached_mtime, cached_offset, parsed = cached
+        if cached_mtime == signature[0] and cached_offset == signature[1]:
+            return parsed
+        if signature[1] > cached_offset:
+            rows, next_offset = inspector.read_jsonl_from_offset(path, cached_offset)
+            inspector.extend_session_detail(parsed, rows, summary=summary)
+            _DETAIL_CACHE[path] = (signature[0], next_offset, parsed)
+            return parsed
+
+    parsed = inspector.parse_session_detail(path, summary=summary)
+    if path not in _DETAIL_CACHE and len(_DETAIL_CACHE) >= DETAIL_CACHE_LIMIT:
+        _DETAIL_CACHE.pop(next(iter(_DETAIL_CACHE)))
+    _DETAIL_CACHE[path] = (signature[0], signature[1], parsed)
+    return parsed
+
+
 def compact_badge(summary: dict[str, Any]) -> str:
     percent = summary.get("latest_context_percent")
     if isinstance(percent, float):
@@ -386,6 +456,9 @@ def session_file_for_thread(paths: list[str], thread_id: str | None) -> Path | N
 
 INJECTION_SCRIPT = r"""
 (payload => {
+  // Bump this only when closures or event handlers change. A long-lived
+  // renderer may still contain an observer from an older plugin release.
+  const RUNTIME_VERSION = 4;
   const ROOT_ID = 'codex-context-token-inspector-root';
   const STYLE_ID = 'codex-context-token-inspector-style';
   const FOOTER_ATTR = 'data-context-token-footer';
@@ -396,6 +469,9 @@ INJECTION_SCRIPT = r"""
   const POSITION_KEY = 'codex-context-token-inspector-position';
   const UNIT_KEY = 'codex-context-token-inspector-unit';
   const UNIT_DEFAULTED_KEY = 'codex-context-token-inspector-unit-defaulted';
+  const previousRuntimeVersion = window.__codexContextTokenInspectorRuntimeVersion;
+  const runtimeChanged = previousRuntimeVersion !== RUNTIME_VERSION;
+  window.__codexContextTokenInspectorRuntimeVersion = RUNTIME_VERSION;
 
   function n(value) {
     return value == null ? '-' : new Intl.NumberFormat().format(value);
@@ -483,9 +559,14 @@ INJECTION_SCRIPT = r"""
     const normalized = normalizeThreadId(threadId);
     return [String(threadId || ''), normalized, `local:${normalized}`].filter(Boolean);
   }
+  function activeSidebarRow() {
+    return document.querySelector('[data-app-action-sidebar-thread-row][data-app-action-sidebar-thread-active="true"]') ||
+      document.querySelector('[data-app-action-sidebar-thread-row][aria-current="page"]') ||
+      document.querySelector('[data-app-action-sidebar-thread-active="true"]') ||
+      document.querySelector('[data-app-action-sidebar-thread-row][data-app-action-sidebar-thread-active]:not([data-app-action-sidebar-thread-active="false"])');
+  }
   function activeThreadId() {
-    const row = document.querySelector('[data-app-action-sidebar-thread-row][data-app-action-sidebar-thread-active]') ||
-      document.querySelector('[data-app-action-sidebar-thread-active]');
+    const row = activeSidebarRow();
     return row ? rowThreadId(row) : null;
   }
   function ensureStyle() {
@@ -495,7 +576,7 @@ INJECTION_SCRIPT = r"""
       style.id = STYLE_ID;
       document.head.appendChild(style);
     }
-    style.textContent = `
+    const css = `
       [${BADGE_ATTR}] {
         display: inline-flex;
         align-items: center;
@@ -652,6 +733,7 @@ INJECTION_SCRIPT = r"""
         font: 11px/1.2 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
       }
     `;
+    if (style.textContent !== css) style.textContent = css;
   }
   function cleanOriginalTitle(value) {
     return String(value || '')
@@ -857,24 +939,23 @@ INJECTION_SCRIPT = r"""
       if (!row.hasAttribute('data-cti-original-title')) row.setAttribute('data-cti-original-title', existing);
       row.removeAttribute('title');
       row.setAttribute(SIDEBAR_HOVER_ATTR, summaryHover(item));
-      if (!row.__ctiSidebarHoverInstalled) {
-        row.__ctiSidebarHoverInstalled = true;
-        row.addEventListener('mouseenter', () => showSidebarTooltip(row, row.getAttribute(SIDEBAR_HOVER_ATTR) || ''));
-        row.addEventListener('mouseleave', hideSidebarTooltip);
-        row.addEventListener('blur', hideSidebarTooltip);
-      }
     });
   }
   function assistantNodes() {
+    // Codex tasks and ChatGPT conversations currently use different turn
+    // wrappers. Keep both paths so an app update can move a task between them.
     const selectors = [
       '[data-content-search-assistant-turn-key]',
       '[data-local-conversation-final-assistant]',
+      '[data-chatgpt-conversation-turn="true"]',
     ];
     const seen = new Set();
     const nodes = [];
     for (const selector of selectors) {
       document.querySelectorAll(selector).forEach(node => {
-        const element = node.closest('[data-content-search-assistant-turn-key]') || node;
+        const element = node.closest('[data-content-search-assistant-turn-key]') ||
+          node.closest('[data-chatgpt-conversation-turn="true"]') ||
+          node;
         if (!seen.has(element)) {
           seen.add(element);
           nodes.push(element);
@@ -885,8 +966,9 @@ INJECTION_SCRIPT = r"""
     return nodes.filter(node => !node.closest(`#${ROOT_ID}`));
   }
   function metadataTargetForAssistant(node) {
-    const turn = node.closest('[data-turn-key]');
-    if (!turn) return null;
+    const turn = node.closest('[data-turn-key], [data-chatgpt-conversation-turn="true"]') || node;
+    const sentTime = turn.querySelector('[data-assistant-message-sent-time]');
+    if (sentTime) return sentTime;
     const candidates = Array.from(turn.querySelectorAll('span, div')).filter(el => {
       if (el.closest(`#${ROOT_ID}`) || el.hasAttribute(CHIP_ATTR)) return false;
       const text = (el.textContent || '').trim();
@@ -1053,11 +1135,12 @@ INJECTION_SCRIPT = r"""
         if (target?.parentElement) {
           target.parentElement.appendChild(chip);
         } else {
-          node.insertAdjacentElement('afterbegin', chip);
+          node.appendChild(chip);
         }
       }
-      chip.textContent = chipText;
-      chip.setAttribute('title', itemTitle(item, sessionRound, sessionTotalRounds));
+      if (chip.textContent !== chipText) chip.textContent = chipText;
+      const title = itemTitle(item, sessionRound, sessionTotalRounds);
+      if (chip.getAttribute('title') !== title) chip.setAttribute('title', title);
     });
   }
   function applyHud(payload, currentDetail = null) {
@@ -1078,20 +1161,21 @@ INJECTION_SCRIPT = r"""
       root.__ctiSelectedSummary ||
       ((payload.summaries || []).length === 1 ? payload.summaries[0] : null);
     if (!selected) {
-      body.textContent = 'No token records found.';
+      if (body.textContent !== 'No token records found.') body.textContent = 'No token records found.';
       return;
     }
     root.__ctiSelectedThreadId = selected.thread_id;
     root.__ctiSelectedSummary = selected;
     root.__ctiSessionTotalTokens = selected.session_total_tokens;
     updateHudTitle(root);
-    body.innerHTML = `
+    const bodyHtml = `
       <div>status: ${pressure(selected.latest_context_percent)} | left ${token(remainingContext(selected))}</div>
       <div>context: ${token(selected.latest_context_tokens)} / ${token(selected.context_window)} (${pct(selected.latest_context_percent)})</div>
       <div>turn: ${token(selected.latest_turn_total_tokens)} (in ${token(selected.latest_turn_input_tokens)}, cached ${token(selected.latest_turn_cached_input_tokens)}, out ${token(selected.latest_turn_output_tokens)}, reason ${token(selected.latest_turn_reasoning_tokens)})</div>
       <div>session: ${token(selected.session_total_tokens)} (in ${token(selected.session_input_tokens)}, cached ${token(selected.session_cached_input_tokens)}, out ${token(selected.session_output_tokens)}, reason ${token(selected.session_reasoning_tokens)})</div>
       <div class="cti-credit">Made by Kevin KE</div>
     `;
+    if (body.innerHTML !== bodyHtml) body.innerHTML = bodyHtml;
     const toggle = root.querySelector('[data-cti-toggle]');
     toggle.textContent = root.getAttribute('data-collapsed') === 'true' ? '+' : '−';
     updateUnitButtons(root);
@@ -1101,7 +1185,8 @@ INJECTION_SCRIPT = r"""
     if (!title) return;
     const collapsed = root.getAttribute('data-collapsed') === 'true';
     const total = root.__ctiSessionTotalTokens;
-    title.textContent = collapsed && total != null ? `Monitor (ttk:${token(total)})` : 'Monitor';
+    const text = collapsed && total != null ? `Monitor (ttk:${token(total)})` : 'Monitor';
+    if (title.textContent !== text) title.textContent = text;
   }
   function clearFooters() {
     document.querySelectorAll(`[${FOOTER_ATTR}]`).forEach(node => node.remove());
@@ -1128,7 +1213,7 @@ INJECTION_SCRIPT = r"""
       if (window.__codexContextTokenInspectorApplying) return;
       window.__codexContextTokenInspectorApplying = true;
       try {
-        const currentDetail = detailForVisiblePage(payload) || detailForCurrentThread(payload);
+        const currentDetail = detailForCurrentThread(payload) || detailForVisiblePage(payload);
         payload.currentDetailThreadId = currentDetail?.thread_id || null;
         applyHud(payload, currentDetail);
         if (currentDetail) {
@@ -1153,7 +1238,9 @@ INJECTION_SCRIPT = r"""
     try {
       payload.activeThreadId = activeThreadId() || payload.activeThreadId;
       applySidebar(payload.summaries || []);
-      const currentDetail = detailForVisiblePage(payload) || detailForCurrentThread(payload);
+      // The active sidebar row is the authoritative session identity. Visible
+      // text matching remains a fallback for app builds that omit that marker.
+      const currentDetail = detailForCurrentThread(payload) || detailForVisiblePage(payload);
       payload.currentDetailThreadId = currentDetail?.thread_id || null;
       applyHud(payload, currentDetail);
     } finally {
@@ -1165,21 +1252,50 @@ INJECTION_SCRIPT = r"""
     window.__codexContextTokenInspectorPayload = payload;
     if (window.__codexContextTokenInspectorObserver) return;
     let timer = null;
-    const observer = new MutationObserver(() => {
+    const observer = new MutationObserver(records => {
       if (window.__codexContextTokenInspectorApplying) return;
-      if (timer) return;
+      const activeChanged = records.some(record =>
+        record.type === 'attributes' &&
+        (record.attributeName === 'data-app-action-sidebar-thread-active' || record.attributeName === 'aria-current')
+      );
+      // Session switches deserve a fast path. Ordinary render churn is batched
+      // to avoid repeatedly walking the message tree while a response streams.
+      if (timer && !activeChanged) return;
+      if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = null;
         applyAll(window.__codexContextTokenInspectorPayload);
-      }, 650);
+      }, activeChanged ? 80 : 300);
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['data-app-action-sidebar-thread-active', 'aria-current'],
+    });
     window.__codexContextTokenInspectorObserver = observer;
   }
 
+  function resetStaleRuntime() {
+    if (!runtimeChanged) return;
+    window.__codexContextTokenInspectorObserver?.disconnect();
+    window.__codexContextTokenInspectorObserver = null;
+    if (window.__codexContextTokenInspectorDetailTimer) {
+      clearTimeout(window.__codexContextTokenInspectorDetailTimer);
+      window.__codexContextTokenInspectorDetailTimer = null;
+    }
+    if (window.__codexContextTokenInspectorIdleCallback && window.cancelIdleCallback) {
+      window.cancelIdleCallback(window.__codexContextTokenInspectorIdleCallback);
+      window.__codexContextTokenInspectorIdleCallback = null;
+    }
+    // Position, collapse state, and unit remain in localStorage and are restored
+    // when the versioned HUD is recreated.
+    document.getElementById(ROOT_ID)?.remove();
+  }
+
+  resetStaleRuntime();
   ensureDefaultUnit();
   ensureStyle();
-  hideSidebarTooltip();
   installSidebarHoverDelegation();
   installObserver(payload);
   applyAll(payload);
@@ -1214,6 +1330,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--interval", type=float, default=10.0, help="Refresh interval in seconds.")
     parser.add_argument("--once", action="store_true", help="Inject once and exit.")
+    parser.add_argument("--quiet", action="store_true", help="Suppress successful refresh output.")
     parser.add_argument(
         "paths",
         nargs="*",
@@ -1225,17 +1342,43 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
     roots = args.paths or [str(path) for path in inspector.DEFAULT_ROOTS]
-    target = select_target(devtools_targets(args.port))
-    client = CDPClient(str(target["webSocketDebuggerUrl"]))
+    client: CDPClient | None = None
+    last_error: str | None = None
     try:
         while True:
-            result = inject_once(client, roots, args.limit, args.detail_limit)
-            print(json.dumps(result, ensure_ascii=False))
+            try:
+                if client is None:
+                    target = select_target(devtools_targets(args.port))
+                    client = CDPClient(str(target["webSocketDebuggerUrl"]))
+                result = inject_once(client, roots, args.limit, args.detail_limit)
+                if not args.quiet:
+                    print(json.dumps(result, ensure_ascii=False), flush=True)
+                last_error = None
+            except (CDPError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
+                if client is not None:
+                    client.close()
+                    client = None
+                if args.once:
+                    raise
+
+                # A renderer can be replaced while the app remains open. Reconnect
+                # in-process in that case; return to the launcher if CDP disappeared.
+                try:
+                    devtools_targets(args.port)
+                except CDPError:
+                    return 1
+                message = f"Codex Monitor reconnecting after CDP error: {exc}"
+                if message != last_error:
+                    print(message, file=sys.stderr, flush=True)
+                    last_error = message
+                time.sleep(min(max(args.interval, 0.2), 2.0))
+                continue
             if args.once:
                 break
             time.sleep(args.interval)
     finally:
-        client.close()
+        if client is not None:
+            client.close()
     return 0
 
 

@@ -7,6 +7,7 @@ import argparse
 import html
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -15,6 +16,9 @@ DEFAULT_ROOTS = [
     Path.home() / ".codex" / "sessions",
     Path.home() / ".codex" / "archived_sessions",
 ]
+THREAD_ID_PATTERN = re.compile(
+    r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
+)
 
 
 def comma(value: int | None) -> str:
@@ -24,7 +28,7 @@ def comma(value: int | None) -> str:
 
 
 def pct(numerator: int | None, denominator: int | None) -> float | None:
-    if not numerator or not denominator:
+    if numerator is None or denominator is None or denominator == 0:
         return None
     return round((numerator / denominator) * 100, 1)
 
@@ -197,19 +201,44 @@ def usage_summary_from_token_info(token_info: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def parse_session_detail(path: str | Path) -> dict[str, Any]:
+def parse_session_detail(
+    path: str | Path,
+    summary: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     path = Path(path).expanduser()
-    meta: dict[str, Any] = {}
-    messages: list[dict[str, Any]] = []
-    pending_assistant_index: int | None = None
-    current_turn_index = 0
+    detail = {
+        "summary": summary if summary is not None else summarize_session(path),
+        "meta": {},
+        "messages": [],
+        "_pending_assistant_index": None,
+        "_current_turn_index": 0,
+    }
+    extend_session_detail(detail, read_jsonl(path), summary=summary)
+    return detail
 
-    for row in read_jsonl(path):
+
+def extend_session_detail(
+    detail: dict[str, Any],
+    rows: Iterable[dict[str, Any]],
+    summary: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Append JSONL rows to a previously parsed detail object.
+
+    Session files are append-only. The injector uses this state to avoid
+    reparsing a long conversation each time a new token-count row arrives.
+    """
+    meta = detail.setdefault("meta", {})
+    messages = detail.setdefault("messages", [])
+    pending_assistant_index = detail.get("_pending_assistant_index")
+    current_turn_index = detail.get("_current_turn_index", 0)
+
+    for row in rows:
         payload = row.get("payload")
         timestamp = row.get("timestamp")
 
         if row.get("type") == "session_meta" and isinstance(payload, dict):
-            meta = payload
+            meta.clear()
+            meta.update(payload)
             continue
 
         if row.get("type") == "response_item" and isinstance(payload, dict):
@@ -246,11 +275,36 @@ def parse_session_detail(path: str | Path) -> dict[str, Any]:
     for message in messages:
         message["total_turns"] = current_turn_index or None
 
-    return {
-        "summary": summarize_session(path),
-        "meta": meta,
-        "messages": messages,
-    }
+    if summary is not None:
+        detail["summary"] = summary
+    detail["_pending_assistant_index"] = pending_assistant_index
+    detail["_current_turn_index"] = current_turn_index
+    return detail
+
+
+def read_jsonl_from_offset(path: str | Path, offset: int) -> tuple[list[dict[str, Any]], int]:
+    path = Path(path).expanduser()
+    with path.open("rb") as handle:
+        handle.seek(offset)
+        data = handle.read()
+    if not data:
+        return [], offset
+
+    # Leave an in-progress final line for the next refresh instead of silently
+    # dropping it if the app is writing at the same moment we read the file.
+    final_newline = data.rfind(b"\n")
+    if final_newline < 0:
+        return [], offset
+    complete = data[: final_newline + 1]
+    rows: list[dict[str, Any]] = []
+    for line in complete.splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows, offset + len(complete)
 
 
 def message_text(payload: dict[str, Any]) -> str:
@@ -294,6 +348,9 @@ def as_int(value: Any) -> int | None:
 
 def infer_thread_id(path: Path) -> str:
     name = path.stem
+    matches = THREAD_ID_PATTERN.findall(name)
+    if matches:
+        return matches[-1]
     if "-" not in name:
         return name
     return name.rsplit("-", 1)[-1]

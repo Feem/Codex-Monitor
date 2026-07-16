@@ -1,6 +1,6 @@
 ---
 name: codex-monitor
-description: Start, inspect, or repair the local Codex Monitor overlay for Codex Desktop context-window and token usage.
+description: Start, inspect, or repair the local Codex Monitor overlay for context-window and token usage in ChatGPT or Codex Desktop.
 ---
 
 # Codex Monitor
@@ -9,7 +9,7 @@ Use this skill when the user asks to show Codex context usage, token usage, sess
 
 ## Boundary
 
-Codex Monitor is local and read-only. It does not patch `Codex.app`, `app.asar`, session JSONL files, auth files, or Codex settings. It reads local Codex session logs and injects temporary DOM elements into a Codex renderer launched with a local Chrome DevTools port.
+Codex Monitor is local and read-only. It does not patch `ChatGPT.app`, `Codex.app`, `app.asar`, session JSONL files, auth files, or Codex settings. It reads local Codex session logs and injects temporary DOM elements into a Codex renderer launched with a loopback-only Chrome DevTools port.
 
 ## Install From GitHub
 
@@ -36,10 +36,10 @@ From the plugin root:
 ./scripts/start_codex_monitor.sh 9222
 ```
 
-This reopens Codex with a local DevTools port, injects the monitor, and loops so the overlay is restored after Codex restarts.
+This discovers either the current `ChatGPT.app` bundle or the legacy `Codex.app`, reopens it with a local DevTools port, injects the monitor, and loops so the overlay is restored after renderer restarts.
 The injector refreshes the session payload every 10 seconds by default while the in-page observer handles ordinary UI changes.
-For responsiveness, sidebar hover summaries cover the latest 100 sessions while per-message chip details are parsed for the latest 12 sessions by default. Use `--detail-limit` on `context_token_injector.py` if older sessions need chips.
-If the requested port is occupied, the scripts automatically choose the next available local port.
+For responsiveness, sidebar hover summaries cover the latest 100 sessions while per-message chip details are parsed for the latest 6 sessions by default. Use `--detail-limit` on `context_token_injector.py` if older sessions need chips.
+If the requested port is occupied, the scripts reuse it only when it owns a Codex renderer; otherwise they choose the next available local port.
 
 ## Auto Start
 
@@ -74,7 +74,7 @@ python3 ./scripts/context_token_inspector.py --limit 20 --format table
 
 ## Upgrade Handling
 
-If Codex Desktop upgrades or restarts, injected DOM elements disappear because they are intentionally temporary. Run `./scripts/start_codex_monitor.sh 9222` again, or keep that script running in a terminal so it can reconnect and re-inject after the renderer returns.
+If the desktop app upgrades or restarts, injected DOM elements disappear because they are intentionally temporary. Run `./scripts/start_codex_monitor.sh 9222` again, or keep the LaunchAgent installed so it can reconnect and re-inject after the renderer returns. The injector selects the main Codex window instead of utility renderers and replaces stale versioned observers without resetting the saved Monitor position, collapse state, or unit. An active response may defer the required app relaunch until the next start.
 
 ## Interpretation
 

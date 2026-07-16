@@ -4,7 +4,7 @@
 
 English | [中文](README.zh-CN.md)
 
-Codex Monitor is a local, read-only overlay for Codex Desktop. It shows context-window usage and token consumption inside the existing Codex window without patching the app bundle or copying session data into this repository.
+Codex Monitor is a local, read-only overlay for Codex in the current ChatGPT desktop app and the legacy standalone Codex Desktop app. It shows context-window usage and token consumption inside the existing window without patching the app bundle or copying session data into this repository.
 
 ![Codex Monitor demo](assets/codex-monitor-demo.svg)
 
@@ -16,13 +16,15 @@ Built by Kevin KE.
 
 ## Features
 
-- Draggable `Monitor` panel inside Codex Desktop.
+- Draggable `Monitor` panel inside the Codex workspace.
 - Collapsed Monitor title shows the current session total token value, for example `Monitor (ttk:58.9M)`.
 - Per-response chip in the format `Token: Current ... | Total ...   Rounds: User ... | Assistant ...`.
 - Sidebar hover panel with session-level total, input, cached input, output, and reasoning tokens.
 - Token display unit switcher: raw, K, and M. The default unit is K.
 - Collapsed Monitor keeps the compact title and expand button while hiding unit controls.
 - Local-only operation through Chrome DevTools Protocol.
+- Automatic app discovery for both `/Applications/ChatGPT.app` and the legacy `/Applications/Codex.app`.
+- Compatible message anchors for Codex task turns and integrated ChatGPT conversation turns.
 
 ## Install
 
@@ -63,8 +65,9 @@ Run the monitor with automatic re-injection:
 
 This is the recommended path. It opens Codex with a local DevTools port and keeps the injector running so the overlay is restored after a Codex renderer restart.
 The injector refreshes the session payload every 10 seconds by default while the in-page observer handles ordinary UI changes.
-For responsiveness, sidebar hover summaries cover the latest 100 sessions while per-message chip details are parsed for the latest 12 sessions by default. Use `--detail-limit` on `context_token_injector.py` if you need chips for older sessions.
-If the requested port is occupied, the scripts automatically move to the next available local port.
+For responsiveness, sidebar hover summaries cover the latest 100 sessions while per-message chip details are parsed for the latest 6 sessions by default. Use `--detail-limit` on `context_token_injector.py` if you need chips for older sessions.
+Long session details are cached and extended from newly appended JSONL rows instead of being reparsed from the beginning on every refresh.
+If the requested port is occupied, the scripts reuse it only when it belongs to the Codex renderer; otherwise they automatically move to the next available local port.
 
 Install the macOS LaunchAgent for automatic start after login, Codex restart, or Codex update:
 
@@ -96,9 +99,11 @@ Run it again after restarting Codex. The injected UI keeps itself updated while 
 
 ## Codex Desktop Updates
 
-Codex Monitor injects temporary DOM elements into the active Codex renderer. That is deliberate: it avoids changing `Codex.app` or app resources. If Codex Desktop upgrades, restarts, or replaces the renderer, the injected UI disappears and must be injected again.
+Codex Monitor injects temporary DOM elements into the active Codex renderer. That is deliberate: it avoids changing `ChatGPT.app`, `Codex.app`, or app resources. If the desktop app upgrades, restarts, or replaces the renderer, the injected UI disappears and must be injected again.
 
-Use `./scripts/start_codex_monitor.sh 9222` for the automated path. It relaunches Codex with the DevTools port, runs the injector in a loop, and reopens/reinjects when the DevTools endpoint disappears. Use `./scripts/install_launch_agent.sh 9222` to keep this loop alive after login, Codex restart, and Codex updates. The LaunchAgent passes `--no-reopen-after-quit`, so it waits while Codex is intentionally closed and resumes after you open Codex again. If a future Codex release changes the DOM anchors for sidebar rows or assistant messages, the monitor will still read token data, but chip placement may need a selector update.
+Use `./scripts/start_codex_monitor.sh 9222` for the automated path. It discovers either supported app bundle, relaunches it with a loopback-only DevTools port, and reconnects after renderer replacement. Use `./scripts/install_launch_agent.sh 9222` to keep this loop alive after login and app updates. The LaunchAgent waits while Codex is intentionally closed; after you open it normally, one brief relaunch may be required to add the DevTools flag. An active response can defer that relaunch until the next app start.
+
+Version `0.3.0` was verified with `ChatGPT.app` `26.707.72221` (build `5307`). It adds support for Codex integrated into `ChatGPT.app`, keeps compatibility with the standalone `Codex.app`, and supports both Codex task turns and `data-chatgpt-conversation-turn` message wrappers. It also distinguishes the main window from utility renderers such as the avatar overlay, migrates stale in-page observers after a Monitor upgrade, and follows the active task's explicit `true`/`false` state during fast switches.
 
 ## Codex Plugin
 
@@ -141,6 +146,7 @@ python3 ./scripts/context_token_inspector.py --limit 20 --format table
 
 Codex Monitor does not modify:
 
+- `ChatGPT.app`
 - `Codex.app`
 - `app.asar`
 - Codex session JSONL files
@@ -151,7 +157,7 @@ It reads local Codex session logs and injects temporary DOM elements into a Code
 ## Tests
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 python3 ./tests/test_context_token_inspector.py
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
 ```
 
 ## Repository Privacy
