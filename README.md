@@ -106,6 +106,11 @@ Use `./scripts/start_codex_monitor.sh 9222` for the automated path. It discovers
 
 ## Changelog
 
+### v0.3.2
+
+- Prevented duplicate per-response token rows in multi-step tasks by assigning one stable chip to each native reply action row.
+- Removed stale token rows during refresh so conversation height and bottom scrolling remain stable when switching tasks.
+
 ### v0.3.1
 
 - Moved per-response token details below the native action buttons as a full-width wrapping line.

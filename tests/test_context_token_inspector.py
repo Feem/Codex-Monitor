@@ -565,7 +565,7 @@ class ContextTokenInspectorTests(unittest.TestCase):
         script = injector.INJECTION_SCRIPT
         bootstrap = script.split("installSidebarHoverDelegation();", 1)[1].split("installObserver(payload);", 1)[0]
 
-        self.assertIn("const RUNTIME_VERSION = 5;", script)
+        self.assertIn("const RUNTIME_VERSION = 6;", script)
         self.assertIn("if (!runtimeChanged) return;", script)
         self.assertIn("document.getElementById(ROOT_ID)?.remove();", script)
         self.assertIn("__codexContextTokenInspectorObserver?.disconnect", script)
@@ -599,12 +599,26 @@ class ContextTokenInspectorTests(unittest.TestCase):
         )
         self.assertIn("[data-assistant-message-sent-time]", script)
         self.assertIn("function actionRowForAssistant(node)", script)
+        self.assertIn("function assistantChipTargets()", script)
+        self.assertIn("targetsByHost.set(host, { node, actionRow, host });", script)
         self.assertIn("actionRow.insertAdjacentElement('afterend', chip);", script)
-        self.assertIn("node.appendChild(chip);", script)
+        self.assertIn("host.appendChild(chip);", script)
         self.assertNotIn("target.parentElement.appendChild(chip)", script)
         self.assertNotIn("node.insertAdjacentElement('afterbegin', chip)", script)
         self.assertIn("if (chip.textContent !== chipText)", script)
         self.assertIn("if (body.innerHTML !== bodyHtml)", script)
+
+    def test_reply_chips_are_reused_by_action_row_host_and_deduplicated(self):
+        injector = load_injector()
+        script = injector.INJECTION_SCRIPT
+        apply_footers = script.split("function applyFooters(detail)", 1)[1].split("function applyHud", 1)[0]
+
+        self.assertIn("const directChips = directReplyChips(host);", apply_footers)
+        self.assertIn("actionRow?.nextElementSibling?.hasAttribute(CHIP_ATTR)", apply_footers)
+        self.assertIn("const keptChips = new Set();", apply_footers)
+        self.assertIn("keptChips.add(chip);", apply_footers)
+        self.assertIn("if (!keptChips.has(chip)) chip.remove();", apply_footers)
+        self.assertNotIn("let chip = node.querySelector(`[${CHIP_ATTR}]`);", apply_footers)
 
     def test_reply_chip_uses_a_full_width_wrapping_row(self):
         injector = load_injector()

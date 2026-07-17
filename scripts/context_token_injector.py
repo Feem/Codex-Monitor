@@ -458,7 +458,7 @@ INJECTION_SCRIPT = r"""
 (payload => {
   // Bump this only when closures or event handlers change. A long-lived
   // renderer may still contain an observer from an older plugin release.
-  const RUNTIME_VERSION = 5;
+  const RUNTIME_VERSION = 6;
   const ROOT_ID = 'codex-context-token-inspector-root';
   const STYLE_ID = 'codex-context-token-inspector-style';
   const FOOTER_ATTR = 'data-context-token-footer';
@@ -1059,6 +1059,22 @@ INJECTION_SCRIPT = r"""
       null;
     return candidate?.parentElement || null;
   }
+  function assistantChipTargets() {
+    const targetsByHost = new Map();
+    assistantNodes().forEach(node => {
+      const actionRow = actionRowForAssistant(node);
+      const host = actionRow?.parentElement || node;
+      if (!host) return;
+      // Multi-step turns can expose several assistant wrappers for one native
+      // action row. The action-row host is the visible reply boundary, so the
+      // last wrapper for that host owns its single token chip.
+      targetsByHost.set(host, { node, actionRow, host });
+    });
+    return Array.from(targetsByHost.values());
+  }
+  function directReplyChips(host) {
+    return Array.from(host?.children || []).filter(child => child.hasAttribute(CHIP_ATTR));
+  }
   function normalizedText(value) {
     return String(value || '')
       .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
@@ -1191,37 +1207,49 @@ INJECTION_SCRIPT = r"""
   }
   function applyFooters(detail) {
     if (!detail) return;
-    const nodes = assistantNodes();
+    const targets = assistantChipTargets();
     const items = detail.assistantItems || [];
     const used = new Set();
-    nodes.forEach((node, index) => {
-      const item = visibleItemForNode(node, index, items, used, nodes.length);
+    const keptChips = new Set();
+    targets.forEach(({ node, actionRow, host }, index) => {
+      const item = visibleItemForNode(node, index, items, used, targets.length);
       const text = item?.footer;
       if (!text) return;
       node.querySelector(`[${FOOTER_ATTR}]`)?.remove();
       const sessionRound = item.roundIndex || index + 1;
-      const sessionTotalRounds = item.totalRounds || items.length || nodes.length;
+      const sessionTotalRounds = item.totalRounds || items.length || targets.length;
       const chipText = itemChip(item, sessionRound, sessionTotalRounds);
-      const actionRow = actionRowForAssistant(node);
-      let chip = node.querySelector(`[${CHIP_ATTR}]`);
+      const directChips = directReplyChips(host);
+      // A v5 chip can be outside `node` after it is moved below the native
+      // buttons. Look it up from the stable host first so refreshes reuse it.
+      let chip = actionRow?.nextElementSibling?.hasAttribute(CHIP_ATTR)
+        ? actionRow.nextElementSibling
+        : directChips[0] || node.querySelector(`[${CHIP_ATTR}]`);
       if (!chip) {
         chip = document.createElement('div');
         chip.className = 'cti-reply-chip';
         chip.setAttribute(CHIP_ATTR, 'true');
       }
+      keptChips.add(chip);
       chip.lang = uiLanguage() === 'zh' ? 'zh-CN' : 'en';
-      if (actionRow?.parentElement) {
+      if (actionRow?.parentElement === host) {
         // Keep Codex's fixed-height action row untouched. The chip is a sibling
         // immediately below it, so buttons and timestamps retain their layout.
-        if (chip.parentElement !== actionRow.parentElement || chip.previousElementSibling !== actionRow) {
+        if (chip.parentElement !== host || chip.previousElementSibling !== actionRow) {
           actionRow.insertAdjacentElement('afterend', chip);
         }
-      } else if (chip.parentElement !== node) {
-        node.appendChild(chip);
+      } else if (chip.parentElement !== host) {
+        host.appendChild(chip);
       }
       if (chip.textContent !== chipText) chip.textContent = chipText;
       const title = itemTitle(item, sessionRound, sessionTotalRounds);
       if (chip.getAttribute('title') !== title) chip.setAttribute('title', title);
+    });
+    // Remove duplicates created by older runtimes and chips whose virtualized
+    // reply host is no longer present. This also makes repeated refreshes
+    // idempotent, preventing token rows from growing the scrollable content.
+    document.querySelectorAll(`[${CHIP_ATTR}]`).forEach(chip => {
+      if (!keptChips.has(chip)) chip.remove();
     });
   }
   function applyHud(payload, currentDetail = null) {
@@ -1402,6 +1430,7 @@ INJECTION_SCRIPT = r"""
     selectedThreadId: payload.selectedThreadId,
     currentDetailThreadId: payload.currentDetailThreadId || null,
     assistantNodes: assistantNodes().length,
+    replyChips: document.querySelectorAll(`[${CHIP_ATTR}]`).length,
   };
 })
 """
