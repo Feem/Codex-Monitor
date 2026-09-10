@@ -399,7 +399,14 @@ const markdownMatched = visibleItemForNode(
   new Set(),
   2
 );
-console.log(JSON.stringify({ unmatched, matchedId: matched?.id, markdownMatchedId: markdownMatched?.id }));
+const structuredMatched = visibleItemForNode(
+  { textContent: '这是一个边界明确的文档调整不需要新增设计文档重点展示本段消耗按累计值相减' },
+  0,
+  [{ id: 111, textPrefix: '这是一个边界明确的文档调整，不需要新增设计文档。重点展示：1. 本段消耗按累计值相减' }],
+  new Set(),
+  2
+);
+console.log(JSON.stringify({ unmatched, matchedId: matched?.id, markdownMatchedId: markdownMatched?.id, structuredMatchedId: structuredMatched?.id }));
 """
 
         result = subprocess.run(
@@ -408,7 +415,12 @@ console.log(JSON.stringify({ unmatched, matchedId: matched?.id, markdownMatchedI
 
         self.assertEqual(
             json.loads(result.stdout),
-            {"unmatched": None, "matchedId": 1, "markdownMatchedId": 93},
+            {
+                "unmatched": None,
+                "matchedId": 1,
+                "markdownMatchedId": 93,
+                "structuredMatchedId": 111,
+            },
         )
 
     def test_rounds_count_user_turns_not_assistant_status_messages(self):
@@ -692,7 +704,7 @@ console.log(JSON.stringify({ unmatched, matchedId: matched?.id, markdownMatchedI
         script = injector.INJECTION_SCRIPT
         bootstrap = script.split("installSidebarHoverDelegation();", 1)[1].split("installObserver(payload);", 1)[0]
 
-        self.assertIn("const RUNTIME_VERSION = 10;", script)
+        self.assertIn("const RUNTIME_VERSION = 11;", script)
         self.assertIn("if (!runtimeChanged) return;", script)
         self.assertIn("document.getElementById(ROOT_ID)?.remove();", script)
         self.assertIn("__codexContextTokenInspectorObserver?.disconnect", script)

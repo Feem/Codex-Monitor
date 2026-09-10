@@ -457,7 +457,7 @@ INJECTION_SCRIPT = r"""
 (payload => {
   // Bump this only when closures or event handlers change. A long-lived
   // renderer may still contain an observer from an older plugin release.
-  const RUNTIME_VERSION = 10;
+  const RUNTIME_VERSION = 11;
   const ROOT_ID = 'codex-context-token-inspector-root';
   const STYLE_ID = 'codex-context-token-inspector-style';
   const FOOTER_ATTR = 'data-context-token-footer';
@@ -1095,7 +1095,8 @@ INJECTION_SCRIPT = r"""
     for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
       if (used.has(itemIndex)) continue;
       const prefix = normalizedText(items[itemIndex].textPrefix);
-      if (prefix && nodeText.includes(prefix)) {
+      const signature = prefix.slice(0, Math.min(24, prefix.length));
+      if (signature.length >= 12 && nodeText.includes(signature)) {
         used.add(itemIndex);
         return items[itemIndex];
       }
