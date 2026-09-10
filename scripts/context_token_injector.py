@@ -458,7 +458,7 @@ INJECTION_SCRIPT = r"""
 (payload => {
   // Bump this only when closures or event handlers change. A long-lived
   // renderer may still contain an observer from an older plugin release.
-  const RUNTIME_VERSION = 6;
+  const RUNTIME_VERSION = 7;
   const ROOT_ID = 'codex-context-token-inspector-root';
   const STYLE_ID = 'codex-context-token-inspector-style';
   const FOOTER_ATTR = 'data-context-token-footer';
@@ -483,6 +483,8 @@ INJECTION_SCRIPT = r"""
       output: 'Output', reasoning: 'Reasoning', token: 'Token', current: 'Current',
       total: 'Total', rounds: 'Rounds', user: 'User', assistant: 'Assistant',
       contextTitle: 'Context', turnTitle: 'Turn', sessionTitle: 'Session', tokens: 'tokens',
+      codexReply: 'Codex reply', replyUsage: 'Reply usage', latestRequest: 'Latest request',
+      compactRecommended: '[COMPACTION RECOMMENDED]',
       userRounds: 'User rounds', assistantRounds: 'Assistant rounds',
       noRecords: 'No token records found.', madeBy: 'Made by Kevin KE',
       unknown: 'UNKNOWN', high: 'HIGH', watch: 'WATCH', ok: 'OK',
@@ -496,6 +498,8 @@ INJECTION_SCRIPT = r"""
       output: '输出', reasoning: '推理', token: 'Token', current: '当前',
       total: '总计', rounds: '轮次', user: '用户', assistant: '助手',
       contextTitle: '上下文', turnTitle: '本轮', sessionTitle: '会话', tokens: 'Token',
+      codexReply: 'Codex回复', replyUsage: '本次对话消耗', latestRequest: '最近一次请求',
+      compactRecommended: '【建议压缩】',
       userRounds: '用户轮次', assistantRounds: '助手轮次',
       noRecords: '暂无 Token 记录。', madeBy: 'Kevin KE 制作',
       unknown: '未知', high: '高', watch: '注意', ok: '正常',
@@ -542,8 +546,11 @@ INJECTION_SCRIPT = r"""
       const digits = Math.abs(scaled) >= 1000 ? 0 : Math.abs(scaled) >= 100 ? 1 : 2;
       return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits }).format(scaled)}K`;
     }
-    if (mode === 'm') return `${(number / 1000000).toFixed(Math.abs(number) >= 10000000 ? 1 : 2)}M`;
+    if (mode === 'm') return `${(number / 1000000).toFixed(2)}M`;
     return n(number);
+  }
+  function tokenOrUnknown(value) {
+    return value == null || Number.isNaN(Number(value)) ? tr('unknown') : token(value);
   }
   function pct(value) {
     return typeof value === 'number' ? `${value.toFixed(1)}%` : '-';
@@ -569,16 +576,18 @@ INJECTION_SCRIPT = r"""
   }
   function itemChip(item, roundIndex, totalRounds) {
     const usage = item?.tokenUsage || {};
-    const userIndex = item.userTurnIndex;
-    const userTotal = item.userTotalTurns;
     const assistantIndex = item.assistantTurnIndex || item.roundIndex || roundIndex;
     const assistantTotal = item.assistantTotalTurns || item.totalRounds || totalRounds;
-    const roundValues = userIndex && userTotal
-      ? `${tr('user')} ${userIndex}/${userTotal}  | ${tr('assistant')} ${assistantIndex}/${assistantTotal}`
-      : `${tr('assistant')} ${assistantIndex}/${assistantTotal}`;
-    const current = `${tr('current')} ${token(usage.latest_context_tokens)}/${token(usage.context_window)} ${parenthesized(pct(usage.latest_context_percent))}`;
-    return `${labeled('token', current)} | ${tr('total')} ${token(usage.latest_turn_total_tokens)}/${token(usage.session_total_tokens)}   ` +
-      labeled('rounds', roundValues);
+    const separator = uiLanguage() === 'zh' ? ' ｜ ' : ' | ';
+    const context = `${token(usage.latest_context_tokens)}/${token(usage.context_window)}${parenthesized(pct(usage.latest_context_percent))}`;
+    const compactRecommended = typeof usage.latest_context_percent === 'number' && usage.latest_context_percent >= 85
+      ? tr('compactRecommended')
+      : '';
+    return [
+      labeled('codexReply', `${assistantIndex}/${assistantTotal}`),
+      labeled('replyUsage', `${tokenOrUnknown(usage.segment_total_tokens)}/${token(usage.session_total_tokens)}`),
+      labeled('contextTitle', context),
+    ].join(separator) + compactRecommended;
   }
   function itemTitle(item, roundIndex, totalRounds) {
     const usage = item?.tokenUsage || {};
@@ -593,7 +602,8 @@ INJECTION_SCRIPT = r"""
     ]);
     const lines = [
       labeled('contextTitle', `${token(usage.latest_context_tokens)} / ${token(usage.context_window)} ${parenthesized(pct(usage.latest_context_percent))}`),
-      labeled('turnTitle', `${token(usage.latest_turn_total_tokens)} ${tr('tokens')} ${parenthesized(turnBreakdown)}`),
+      labeled('replyUsage', `${tokenOrUnknown(usage.segment_total_tokens)} / ${token(usage.session_total_tokens)} ${tr('tokens')}`),
+      labeled('latestRequest', `${token(usage.latest_turn_total_tokens)} ${tr('tokens')} ${parenthesized(turnBreakdown)}`),
       labeled('sessionTitle', `${token(usage.session_total_tokens)} ${tr('tokens')}`),
     ];
     if (userIndex && userTotal) lines.push(labeled('userRounds', `${userIndex}/${userTotal}`));

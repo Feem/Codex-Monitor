@@ -106,6 +106,11 @@ Codex Monitor 注入的是临时 DOM 元素，这是有意设计的：它避免�
 
 ## 更新日志
 
+### v0.3.3
+
+- 回复信息不再把最近一次请求误标为本段消耗，改为相邻可见回复的累计 Token 原始整数之差，并覆盖中间的工具调用和模型请求。
+- 首条、累计缺失或累计重置时明确显示“未知”；最近一次请求移入悬浮详情，上下文达到高压阈值时提示建议压缩。
+
 ### v0.3.2
 
 - 多步骤任务按原生回复操作按钮行绑定唯一 Token 信息，避免重复追加。
@@ -146,8 +151,9 @@ python3 ./scripts/context_token_inspector.py --limit 20 --format table
 | `context` | 当前请求占用的上下文量。 | `last_token_usage.input_tokens` |
 | `context window` | Codex token-count 事件里记录的模型上下文窗口上限。 | `model_context_window` |
 | `left` | 当前请求预计剩余 context。 | `context window - context` |
-| `Token: Current` | 当前请求 context 占用量与模型 context window 的比例。 | `last_token_usage.input_tokens / model_context_window` |
-| `Token: Total` | 当前 assistant 回复 token 与当前 session 累计 token 的比例。 | `last_token_usage.total_tokens / total_token_usage.total_tokens` |
+| `上下文` | 当前请求 context 占用量与模型 context window 的比例。 | `last_token_usage.input_tokens / model_context_window` |
+| `本次对话消耗` | 当前显示记录到上一条显示记录之间的 Token 消耗；先用原始整数相减，再按所选单位格式化。 | 当前显示记录的 `total_token_usage.total_tokens` 减上一条显示记录的值 |
+| `最近一次请求` | 仅最近一次模型请求的消耗，放在回复信息的悬浮详情中。 | `last_token_usage.total_tokens` |
 | `session` | Monitor 面板中的当前 session 总消耗，不统计其他会话。 | 最新 session JSONL |
 | `in` | Codex 记录的输入 token。在 Monitor 的 session 行里，它表示当前 session 累计输入。 | `input_tokens` |
 | `cached` | Codex 记录的 cached input token。当重复上下文被复用时，这个值可能较高。 | `cached_input_tokens` |

@@ -272,6 +272,7 @@ def extend_session_detail(
             messages[pending_assistant_index]["token_footer"] = format_reply_footer(usage)
             pending_assistant_index = None
 
+    annotate_segment_token_usage(messages)
     for message in messages:
         message["total_turns"] = current_turn_index or None
 
@@ -280,6 +281,28 @@ def extend_session_detail(
     detail["_pending_assistant_index"] = pending_assistant_index
     detail["_current_turn_index"] = current_turn_index
     return detail
+
+
+def annotate_segment_token_usage(messages: list[dict[str, Any]]) -> None:
+    """Add usage between adjacent displayed assistant records.
+
+    A displayed reply can span several model requests. Subtracting cumulative
+    totals preserves all of them, while missing or reset totals remain unknown.
+    """
+    previous_total: int | None = None
+    for message in messages:
+        if message.get("role") != "assistant":
+            continue
+        usage = message.get("token_usage")
+        if not isinstance(usage, dict):
+            continue
+        current_total = as_int(usage.get("session_total_tokens"))
+        segment_total = None
+        if current_total is not None and previous_total is not None and current_total >= previous_total:
+            segment_total = current_total - previous_total
+        usage["segment_total_tokens"] = segment_total
+        message["token_footer"] = format_reply_footer(usage)
+        previous_total = current_total
 
 
 def read_jsonl_from_offset(path: str | Path, offset: int) -> tuple[list[dict[str, Any]], int]:
@@ -397,22 +420,18 @@ def format_reply_chip(
 ) -> str:
     percent = summary.get("latest_context_percent")
     percent_text = f" ({percent:.1f}%)" if isinstance(percent, float) else ""
-    chip = (
-        f"Token: Current {comma(summary.get('latest_context_tokens'))}/"
-        f"{comma(summary.get('context_window'))}{percent_text} | "
-        f"Total {comma(summary.get('latest_turn_total_tokens'))}/"
-        f"{comma(summary.get('session_total_tokens'))}"
-    )
-    user_index = user_turn_index if user_turn_index is not None else round_index
-    user_total = user_total_turns if user_total_turns is not None else total_rounds
     assistant_index = assistant_turn_index if assistant_turn_index is not None else round_index
     assistant_total = assistant_total_turns if assistant_total_turns is not None else total_rounds
-    if user_index is not None and user_total is not None:
-        chip += f"   Rounds：User {user_index}/{user_total}"
-        if assistant_index is not None and assistant_total is not None:
-            chip += f"  | Assistant {assistant_index}/{assistant_total}"
-    elif assistant_index is not None and assistant_total is not None:
-        chip += f"   Rounds：Assistant {assistant_index}/{assistant_total}"
+    segment = summary.get("segment_total_tokens")
+    segment_text = comma(segment) if segment is not None else "UNKNOWN"
+    chip = (
+        f"Codex reply: {assistant_index}/{assistant_total} | "
+        f"Reply usage: {segment_text}/{comma(summary.get('session_total_tokens'))} | "
+        f"Context: {comma(summary.get('latest_context_tokens'))}/"
+        f"{comma(summary.get('context_window'))}{percent_text}"
+    )
+    if context_pressure(percent) == "HIGH":
+        chip += " [COMPACTION RECOMMENDED]"
     return chip
 
 

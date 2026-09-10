@@ -106,6 +106,11 @@ Use `./scripts/start_codex_monitor.sh 9222` for the automated path. It discovers
 
 ## Changelog
 
+### v0.3.3
+
+- Replaced the misleading latest-request total on reply chips with the raw cumulative-token difference between adjacent displayed replies, including intervening tool/model requests.
+- Added explicit unknown handling for first, missing, and reset cumulative totals; kept latest-request usage in the chip tooltip and added a high-context compaction recommendation.
+
 ### v0.3.2
 
 - Prevented duplicate per-response token rows in multi-step tasks by assigning one stable chip to each native reply action row.
@@ -146,8 +151,9 @@ python3 ./scripts/context_token_inspector.py --limit 20 --format table
 | `context` | Current request context usage. | `last_token_usage.input_tokens` |
 | `context window` | Model context window reported by Codex token-count events. | `model_context_window` |
 | `left` | Estimated remaining context in the current request. | `context window - context` |
-| `Token: Current` | Current request context usage against the model context window. | `last_token_usage.input_tokens / model_context_window` |
-| `Token: Total` | Current assistant response token usage against cumulative current-session token usage. | `last_token_usage.total_tokens / total_token_usage.total_tokens` |
+| `Context` | Current request context usage against the model context window. | `last_token_usage.input_tokens / model_context_window` |
+| `Reply usage` | Token usage since the previous displayed assistant record. The raw integers are subtracted before applying the selected display unit. | current displayed `total_token_usage.total_tokens` minus the previous displayed value |
+| `Latest request` | Usage for only the latest model request, shown in the reply chip tooltip. | `last_token_usage.total_tokens` |
 | `session` | Current session total shown in the Monitor panel. It is not a sum across all conversations. | latest session JSONL |
 | `in` | Input tokens recorded by Codex. In the Monitor session line, this is cumulative session input. | `input_tokens` |
 | `cached` | Cached input tokens recorded by Codex. This can be high when repeated context is reused. | `cached_input_tokens` |

@@ -178,7 +178,58 @@ class ContextTokenInspectorTests(unittest.TestCase):
         self.assertEqual(detail["summary"]["thread_id"], "019e4e4a-demo")
         self.assertEqual(len(detail["messages"]), 2)
         self.assertEqual(detail["messages"][1]["role"], "assistant")
+        self.assertIsNone(detail["messages"][1]["token_usage"]["segment_total_tokens"])
         self.assertEqual(detail["messages"][1]["token_footer"], "context: 39,949 / 258,400 (15.5%) | turn: 40,416 tokens (in 39,949, out 467, reasoning 72) | session: 64,016 tokens")
+
+    def test_reply_usage_uses_visible_cumulative_delta_across_model_requests(self):
+        module = load_module()
+        rows = [{"timestamp": "meta", "type": "session_meta", "payload": {"id": "019e4e4a-demo"}}]
+
+        def assistant(text, cumulative, latest):
+            return [
+                {"timestamp": text, "type": "response_item", "payload": {
+                    "type": "message", "role": "assistant", "content": [{"text": text}]},
+                },
+                {"timestamp": text, "type": "event_msg", "payload": {
+                    "type": "token_count", "info": {
+                        "total_token_usage": {"total_tokens": cumulative},
+                        "last_token_usage": {"input_tokens": latest - 100, "output_tokens": 100, "total_tokens": latest},
+                        "model_context_window": 258400,
+                    }},
+                },
+            ]
+
+        rows.extend(assistant("reply 70", 4328158, 146780))
+        for cumulative in (4476776, 4627043, 4777533):
+            rows.append({"timestamp": "tool", "type": "event_msg", "payload": {
+                "type": "token_count", "info": {
+                    "total_token_usage": {"total_tokens": cumulative},
+                    "last_token_usage": {"input_tokens": 100000, "total_tokens": 120000},
+                    "model_context_window": 258400,
+                }},
+            })
+        rows.extend(assistant("reply 71", 4928741, 151208))
+
+        messages = module.parse_session_detail(self.write_session(rows))["messages"]
+        usages = [message["token_usage"] for message in messages if message["token_usage"]]
+
+        self.assertIsNone(usages[0]["segment_total_tokens"])
+        self.assertEqual(usages[1]["segment_total_tokens"], 600583)
+        self.assertEqual(usages[1]["latest_turn_total_tokens"], 151208)
+
+    def test_reply_usage_is_unknown_for_missing_or_reset_cumulative_total(self):
+        module = load_module()
+        messages = [
+            {"role": "assistant", "token_usage": {"session_total_tokens": total}}
+            for total in (1000, None, 500, 400, 650)
+        ]
+
+        module.annotate_segment_token_usage(messages)
+
+        self.assertEqual(
+            [message["token_usage"]["segment_total_tokens"] for message in messages],
+            [None, None, None, None, 250],
+        )
 
     def test_injector_payload_keeps_sidebar_and_active_reply_data_compact(self):
         injector = load_injector()
@@ -235,7 +286,10 @@ class ContextTokenInspectorTests(unittest.TestCase):
         self.assertNotIn("Context  39,949 / 258,400", payload["summaries"][0]["hover"])
         self.assertNotIn("/tmp/project", payload["summaries"][0]["hover"])
         self.assertEqual(len(payload["detail"]["assistantFooters"]), 1)
-        self.assertEqual(payload["detail"]["assistantChips"][0], "Token: Current 39,949/258,400 (15.5%) | Total 40,416/64,016   Rounds：Assistant 1/1")
+        self.assertEqual(
+            payload["detail"]["assistantChips"][0],
+            "Codex reply: 1/1 | Reply usage: UNKNOWN/64,016 | Context: 39,949/258,400 (15.5%)",
+        )
 
     def test_injector_payload_uses_session_rounds_for_historical_replies(self):
         injector = load_injector()
@@ -291,7 +345,7 @@ class ContextTokenInspectorTests(unittest.TestCase):
 
         self.assertEqual([item["roundIndex"] for item in items], [1, 2, 3])
         self.assertEqual([item["totalRounds"] for item in items], [3, 3, 3])
-        self.assertTrue(payload["detail"]["assistantChips"][2].endswith("Rounds：Assistant 3/3"))
+        self.assertTrue(payload["detail"]["assistantChips"][2].startswith("Codex reply: 3/3"))
 
     def test_rounds_count_user_turns_not_assistant_status_messages(self):
         injector = load_injector()
@@ -391,8 +445,8 @@ class ContextTokenInspectorTests(unittest.TestCase):
 
         self.assertEqual([item["roundIndex"] for item in items], [1, 2, 2])
         self.assertEqual([item["totalRounds"] for item in items], [2, 2, 2])
-        self.assertTrue(payload["detail"]["assistantChips"][0].endswith("Rounds：User 1/2  | Assistant 1/3"))
-        self.assertTrue(payload["detail"]["assistantChips"][2].endswith("Rounds：User 2/2  | Assistant 3/3"))
+        self.assertTrue(payload["detail"]["assistantChips"][0].startswith("Codex reply: 1/3"))
+        self.assertTrue(payload["detail"]["assistantChips"][2].startswith("Codex reply: 3/3"))
 
     def test_injector_payload_prefers_latest_session_over_stale_active_thread(self):
         injector = load_injector()
@@ -449,7 +503,16 @@ class ContextTokenInspectorTests(unittest.TestCase):
         self.assertEqual(payload["selectedThreadId"], "019e4e4a-new")
         self.assertEqual(payload["detail"]["thread_id"], "019e4e4a-new")
         self.assertEqual(len(payload["detail"]["assistantItems"]), 2)
-        self.assertTrue(payload["detail"]["assistantChips"][1].endswith("Rounds：Assistant 2/2"))
+        self.assertTrue(payload["detail"]["assistantChips"][1].startswith("Codex reply: 2/2"))
+
+    def test_injection_chip_uses_segment_total_and_keeps_latest_request_in_details(self):
+        script = load_injector().INJECTION_SCRIPT
+
+        self.assertIn("tokenOrUnknown(usage.segment_total_tokens)", script)
+        self.assertIn("latestRequest", script)
+        self.assertIn("compactRecommended", script)
+        self.assertIn("(number / 1000000).toFixed(2)", script)
+        self.assertNotIn("${tr('total')} ${token(usage.latest_turn_total_tokens)}", script)
 
     def test_injector_payload_includes_active_session_detail_outside_default_window(self):
         injector = load_injector()
@@ -565,7 +628,7 @@ class ContextTokenInspectorTests(unittest.TestCase):
         script = injector.INJECTION_SCRIPT
         bootstrap = script.split("installSidebarHoverDelegation();", 1)[1].split("installObserver(payload);", 1)[0]
 
-        self.assertIn("const RUNTIME_VERSION = 6;", script)
+        self.assertIn("const RUNTIME_VERSION = 7;", script)
         self.assertIn("if (!runtimeChanged) return;", script)
         self.assertIn("document.getElementById(ROOT_ID)?.remove();", script)
         self.assertIn("__codexContextTokenInspectorObserver?.disconnect", script)

@@ -80,7 +80,8 @@ If the desktop app upgrades or restarts, injected DOM elements disappear because
 ## Interpretation
 
 - `context` uses the current request's `last_token_usage.input_tokens` divided by `model_context_window`.
-- `turn token` uses the current response's `last_token_usage.total_tokens`.
+- Reply usage is the raw cumulative `total_token_usage.total_tokens` difference between adjacent displayed assistant records, so intervening model requests are included. First, missing, or reset totals are unknown.
+- `latest request` uses `last_token_usage.total_tokens` and appears only in reply details.
 - `total token` and Monitor `session` use cumulative `total_token_usage` for the current session only.
 - `user rounds` counts non-environment user messages in the current session JSONL.
 - `assistant rounds` counts assistant messages with token-count records in the current session JSONL.
