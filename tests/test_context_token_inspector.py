@@ -2,6 +2,8 @@ import importlib.util
 import json
 import os
 import pathlib
+import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -28,6 +30,7 @@ def load_injector():
 class ContextTokenInspectorTests(unittest.TestCase):
     def write_session(self, rows):
         tmpdir = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmpdir, ignore_errors=True)
         session = tmpdir / "rollout-2026-05-22T14-06-01-019e4e4a-demo.jsonl"
         with session.open("w", encoding="utf-8") as handle:
             for row in rows:
@@ -347,6 +350,57 @@ class ContextTokenInspectorTests(unittest.TestCase):
         self.assertEqual([item["totalRounds"] for item in items], [3, 3, 3])
         self.assertTrue(payload["detail"]["assistantChips"][2].startswith("Codex reply: 3/3"))
 
+    def test_payload_keeps_all_reply_records_for_scrolled_history(self):
+        injector = load_injector()
+        rows = [{"timestamp": "meta", "type": "session_meta", "payload": {"id": "history-demo"}}]
+        for index in range(1, 46):
+            rows.extend([
+                {"timestamp": str(index), "type": "response_item", "payload": {
+                    "type": "message", "role": "assistant", "content": [{"text": f"reply {index}"}]},
+                },
+                {"timestamp": str(index), "type": "event_msg", "payload": {
+                    "type": "token_count", "info": {
+                        "total_token_usage": {"total_tokens": index * 1000},
+                        "last_token_usage": {"input_tokens": 500, "total_tokens": 1000},
+                        "model_context_window": 258400,
+                    }},
+                },
+            ])
+
+        payload = injector.build_payload([str(self.write_session(rows).parent)], 10, "history-demo")
+        items = payload["detail"]["assistantItems"]
+
+        self.assertEqual(len(items), 45)
+        self.assertEqual(items[0]["assistantTurnIndex"], 1)
+        self.assertEqual(items[-1]["assistantTurnIndex"], 45)
+
+    def test_unmatched_virtualized_node_is_not_bound_to_tail_record(self):
+        injector = load_injector()
+        script = injector.INJECTION_SCRIPT
+        functions = script[
+            script.index("  function normalizedText"):
+            script.index("  function detailCandidates")
+        ]
+        probe = functions + """
+const items = [
+  { id: 1, textPrefix: 'first visible reply' },
+  { id: 2, textPrefix: 'last reply' },
+];
+const unmatched = visibleItemForNode(
+  { textContent: 'different virtualized content' }, 0, items, new Set(), 1
+);
+const matched = visibleItemForNode(
+  { textContent: 'prefix first visible reply suffix' }, 0, items, new Set(), 1
+);
+console.log(JSON.stringify({ unmatched, matchedId: matched?.id }));
+"""
+
+        result = subprocess.run(
+            ["node", "-e", probe], check=True, capture_output=True, text=True
+        )
+
+        self.assertEqual(json.loads(result.stdout), {"unmatched": None, "matchedId": 1})
+
     def test_rounds_count_user_turns_not_assistant_status_messages(self):
         injector = load_injector()
         session = self.write_session(
@@ -628,7 +682,7 @@ class ContextTokenInspectorTests(unittest.TestCase):
         script = injector.INJECTION_SCRIPT
         bootstrap = script.split("installSidebarHoverDelegation();", 1)[1].split("installObserver(payload);", 1)[0]
 
-        self.assertIn("const RUNTIME_VERSION = 7;", script)
+        self.assertIn("const RUNTIME_VERSION = 8;", script)
         self.assertIn("if (!runtimeChanged) return;", script)
         self.assertIn("document.getElementById(ROOT_ID)?.remove();", script)
         self.assertIn("__codexContextTokenInspectorObserver?.disconnect", script)

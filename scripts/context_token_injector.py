@@ -31,7 +31,6 @@ import context_token_inspector as inspector
 
 
 DEFAULT_PORT = 9222
-ASSISTANT_DETAIL_ITEM_LIMIT = 40
 DETAIL_SESSION_LIMIT = 6
 DETAIL_CACHE_LIMIT = 24
 _DETAIL_CACHE: dict[str, tuple[int, int, dict[str, Any]]] = {}
@@ -335,8 +334,8 @@ def build_payload(
             if message.get("role") == "assistant" and message.get("token_usage")
         ]
         total_rounds = len(assistant_token_messages)
-        assistant_item_messages = assistant_token_messages[-ASSISTANT_DETAIL_ITEM_LIMIT:]
-        assistant_start_index = total_rounds - len(assistant_item_messages)
+        assistant_item_messages = assistant_token_messages
+        assistant_start_index = 0
         assistant_items = [
             {
                 "footer": message.get("token_footer"),
@@ -458,7 +457,7 @@ INJECTION_SCRIPT = r"""
 (payload => {
   // Bump this only when closures or event handlers change. A long-lived
   // renderer may still contain an observer from an older plugin release.
-  const RUNTIME_VERSION = 7;
+  const RUNTIME_VERSION = 8;
   const ROOT_ID = 'codex-context-token-inspector-root';
   const STYLE_ID = 'codex-context-token-inspector-style';
   const FOOTER_ATTR = 'data-context-token-footer';
@@ -1102,11 +1101,12 @@ INJECTION_SCRIPT = r"""
         return items[itemIndex];
       }
     }
-    const fallbackStart = Math.max(0, items.length - visibleCount);
-    const fallbackIndex = fallbackStart + index;
-    if (items[fallbackIndex] && !used.has(fallbackIndex)) {
-      used.add(fallbackIndex);
-      return items[fallbackIndex];
+    // Index alignment is safe only when the page contains every displayed
+    // record. With a virtualized subset, tail alignment can attach a recent
+    // record's usage to an unrelated historical reply.
+    if (items.length === visibleCount && items[index] && !used.has(index)) {
+      used.add(index);
+      return items[index];
     }
     return null;
   }

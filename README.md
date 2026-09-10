@@ -6,6 +6,11 @@ English | [中文](README.zh-CN.md)
 
 Codex Monitor is a local, read-only overlay for Codex in the current ChatGPT desktop app and the legacy standalone Codex Desktop app. It shows context-window usage and token consumption inside the existing window without patching the app bundle or copying session data into this repository.
 
+## Key Improvements
+
+- **Reconciled per-reply usage:** each displayed value is calculated from the raw cumulative-token difference between adjacent visible assistant records, so every model request made during tool-heavy work is included. First, missing, and reset totals are shown as unknown instead of producing misleading or negative values.
+- **At-a-glance reply accounting:** every reply now shows `Codex reply | reply usage/session total | context/window (%)`, supports raw/K/M units, keeps the latest single-request usage in the tooltip, and recommends compaction at 85% context usage.
+
 ![Codex Monitor demo](assets/codex-monitor-demo.svg)
 
 ## Author
@@ -105,6 +110,11 @@ Codex Monitor injects temporary DOM elements into the active Codex renderer. Tha
 Use `./scripts/start_codex_monitor.sh 9222` for the automated path. It discovers either supported app bundle, relaunches it with a loopback-only DevTools port, and reconnects after renderer replacement. Use `./scripts/install_launch_agent.sh 9222` to keep this loop alive after login and app updates. The LaunchAgent waits while Codex is intentionally closed; after you open it normally, one brief relaunch may be required to add the DevTools flag. An active response can defer that relaunch until the next app start.
 
 ## Changelog
+
+### v0.3.4
+
+- Kept the complete assistant-record set in each loaded session so scrolled historical replies can resolve their original index and usage.
+- Removed unsafe tail alignment for virtualized DOM subsets; an unmatched reply now stays unlabelled instead of borrowing a recent record's statistics.
 
 ### v0.3.3
 
