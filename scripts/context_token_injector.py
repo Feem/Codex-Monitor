@@ -457,7 +457,7 @@ INJECTION_SCRIPT = r"""
 (payload => {
   // Bump this only when closures or event handlers change. A long-lived
   // renderer may still contain an observer from an older plugin release.
-  const RUNTIME_VERSION = 9;
+  const RUNTIME_VERSION = 10;
   const ROOT_ID = 'codex-context-token-inspector-root';
   const STYLE_ID = 'codex-context-token-inspector-style';
   const FOOTER_ATTR = 'data-context-token-footer';
@@ -1087,7 +1087,7 @@ INJECTION_SCRIPT = r"""
   function normalizedText(value) {
     return String(value || '')
       .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .replace(/[^\p{L}\p{N}]+/gu, '')
       .trim();
   }
   function visibleItemForNode(node, index, items, used, visibleCount) {

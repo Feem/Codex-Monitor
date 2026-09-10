@@ -393,7 +393,7 @@ const matched = visibleItemForNode(
   { textContent: 'prefix first visible reply suffix' }, 0, items, new Set(), 1
 );
 const markdownMatched = visibleItemForNode(
-  { textContent: '已完成自动启动配置 LaunchAgent com.kevinke.codex-monitor 状态 running' },
+  { textContent: '已完成自动启动配置LaunchAgentcom.kevinke.codex-monitor状态running' },
   0,
   [{ id: 93, textPrefix: '已完成自动启动配置\\n\\n- LaunchAgent：`com.kevinke.codex-monitor`\\n- 状态：`running`' }],
   new Set(),
@@ -692,7 +692,7 @@ console.log(JSON.stringify({ unmatched, matchedId: matched?.id, markdownMatchedI
         script = injector.INJECTION_SCRIPT
         bootstrap = script.split("installSidebarHoverDelegation();", 1)[1].split("installObserver(payload);", 1)[0]
 
-        self.assertIn("const RUNTIME_VERSION = 9;", script)
+        self.assertIn("const RUNTIME_VERSION = 10;", script)
         self.assertIn("if (!runtimeChanged) return;", script)
         self.assertIn("document.getElementById(ROOT_ID)?.remove();", script)
         self.assertIn("__codexContextTokenInspectorObserver?.disconnect", script)
