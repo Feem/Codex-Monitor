@@ -392,14 +392,24 @@ const unmatched = visibleItemForNode(
 const matched = visibleItemForNode(
   { textContent: 'prefix first visible reply suffix' }, 0, items, new Set(), 1
 );
-console.log(JSON.stringify({ unmatched, matchedId: matched?.id }));
+const markdownMatched = visibleItemForNode(
+  { textContent: '已完成自动启动配置 LaunchAgent com.kevinke.codex-monitor 状态 running' },
+  0,
+  [{ id: 93, textPrefix: '已完成自动启动配置\\n\\n- LaunchAgent：`com.kevinke.codex-monitor`\\n- 状态：`running`' }],
+  new Set(),
+  2
+);
+console.log(JSON.stringify({ unmatched, matchedId: matched?.id, markdownMatchedId: markdownMatched?.id }));
 """
 
         result = subprocess.run(
             ["node", "-e", probe], check=True, capture_output=True, text=True
         )
 
-        self.assertEqual(json.loads(result.stdout), {"unmatched": None, "matchedId": 1})
+        self.assertEqual(
+            json.loads(result.stdout),
+            {"unmatched": None, "matchedId": 1, "markdownMatchedId": 93},
+        )
 
     def test_rounds_count_user_turns_not_assistant_status_messages(self):
         injector = load_injector()
@@ -682,7 +692,7 @@ console.log(JSON.stringify({ unmatched, matchedId: matched?.id }));
         script = injector.INJECTION_SCRIPT
         bootstrap = script.split("installSidebarHoverDelegation();", 1)[1].split("installObserver(payload);", 1)[0]
 
-        self.assertIn("const RUNTIME_VERSION = 8;", script)
+        self.assertIn("const RUNTIME_VERSION = 9;", script)
         self.assertIn("if (!runtimeChanged) return;", script)
         self.assertIn("document.getElementById(ROOT_ID)?.remove();", script)
         self.assertIn("__codexContextTokenInspectorObserver?.disconnect", script)
