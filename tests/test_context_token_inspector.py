@@ -28,6 +28,29 @@ def load_injector():
 
 
 class ContextTokenInspectorTests(unittest.TestCase):
+    def test_agent_rounds_exclude_progress_and_coalesce_same_turn_finals(self):
+        injector = load_injector()
+        rows = [{"type": "session_meta", "payload": {"id": "round-demo"}}]
+        for phase, turn, total, label in [
+            ("final_answer", "a", 1000, "first"),
+            ("commentary", "b", 2000, "working"),
+            ("final_answer", "b", 3000, "superseded"),
+            ("final_answer", "b", 4500, "second"),
+            ("commentary", "c", 5000, "still working"),
+        ]:
+            rows.extend([
+                {"type": "response_item", "payload": {"type": "message", "role": "assistant", "phase": phase,
+                 "internal_chat_message_metadata_passthrough": {"turn_id": turn}, "content": [{"text": label}]}},
+                {"type": "event_msg", "payload": {"type": "token_count", "info": {
+                    "total_token_usage": {"total_tokens": total}, "last_token_usage": {"total_tokens": 500}}}},
+            ])
+        path = self.write_session(rows)
+        items = injector.build_payload([str(path.parent)], 10, "round-demo")["detail"]["assistantItems"]
+        self.assertEqual([x["textPrefix"] for x in items], ["first", "second"])
+        self.assertEqual([x["assistantTurnIndex"] for x in items], [1, 2])
+        self.assertEqual([x["assistantTotalTurns"] for x in items], [2, 2])
+        self.assertEqual(items[1]["tokenUsage"]["segment_total_tokens"], 3500)
+
     def write_session(self, rows):
         tmpdir = pathlib.Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmpdir, ignore_errors=True)
@@ -704,7 +727,7 @@ console.log(JSON.stringify({ unmatched, matchedId: matched?.id, markdownMatchedI
         script = injector.INJECTION_SCRIPT
         bootstrap = script.split("installSidebarHoverDelegation();", 1)[1].split("installObserver(payload);", 1)[0]
 
-        self.assertIn("const RUNTIME_VERSION = 11;", script)
+        self.assertIn("const RUNTIME_VERSION = 12;", script)
         self.assertIn("if (!runtimeChanged) return;", script)
         self.assertIn("document.getElementById(ROOT_ID)?.remove();", script)
         self.assertIn("__codexContextTokenInspectorObserver?.disconnect", script)

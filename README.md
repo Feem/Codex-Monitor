@@ -111,6 +111,11 @@ Use `./scripts/start_codex_monitor.sh 9222` for the automated path. It discovers
 
 ## Changelog
 
+### v0.3.5
+
+- Count completed Agent turns, excluding commentary and coalescing final answers with the same turn_id.
+- Calculate usage between consecutive completed turns, including intervening tool requests; show raw integers in tooltips for exact reconciliation.
+
 ### v0.3.4
 
 - Kept the complete assistant-record set in each loaded session so scrolled historical replies can resolve their original index and usage.

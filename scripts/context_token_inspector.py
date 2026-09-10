@@ -254,6 +254,8 @@ def extend_session_detail(
                         {
                             "timestamp": timestamp,
                             "role": role,
+                            "phase": payload.get("phase"),
+                            "agent_turn_id": (payload.get("internal_chat_message_metadata_passthrough") or {}).get("turn_id"),
                             "text": text,
                             "token_footer": None,
                             "token_usage": None,

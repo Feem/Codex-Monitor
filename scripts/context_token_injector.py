@@ -261,6 +261,21 @@ def runtime_state(client: CDPClient) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def completed_agent_replies(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Count final Agent turns and compute usage between their endpoints."""
+    replies: dict[str, dict[str, Any]] = {}
+    for index, message in enumerate(messages):
+        if message.get("role") != "assistant" or message.get("phase") not in (None, "final_answer"):
+            continue
+        if message.get("phase") is None and not message.get("token_usage"):
+            continue
+        key = message.get("agent_turn_id") or f"legacy-{index}"
+        replies[key] = {**message, "token_usage": dict(message.get("token_usage") or {})}
+    result = list(replies.values())
+    inspector.annotate_segment_token_usage(result)
+    return result
+
+
 def build_payload(
     paths: list[str],
     limit: int,
@@ -328,11 +343,7 @@ def build_payload(
         if not summary.get("path"):
             continue
         parsed = cached_session_detail(str(summary["path"]), summary)
-        assistant_token_messages = [
-            message
-            for message in parsed.get("messages", [])
-            if message.get("role") == "assistant" and message.get("token_usage")
-        ]
+        assistant_token_messages = completed_agent_replies(parsed.get("messages", []))
         total_rounds = len(assistant_token_messages)
         assistant_item_messages = assistant_token_messages
         assistant_start_index = 0
@@ -457,7 +468,7 @@ INJECTION_SCRIPT = r"""
 (payload => {
   // Bump this only when closures or event handlers change. A long-lived
   // renderer may still contain an observer from an older plugin release.
-  const RUNTIME_VERSION = 11;
+  const RUNTIME_VERSION = 12;
   const ROOT_ID = 'codex-context-token-inspector-root';
   const STYLE_ID = 'codex-context-token-inspector-style';
   const FOOTER_ATTR = 'data-context-token-footer';
@@ -601,7 +612,7 @@ INJECTION_SCRIPT = r"""
     ]);
     const lines = [
       labeled('contextTitle', `${token(usage.latest_context_tokens)} / ${token(usage.context_window)} ${parenthesized(pct(usage.latest_context_percent))}`),
-      labeled('replyUsage', `${tokenOrUnknown(usage.segment_total_tokens)} / ${token(usage.session_total_tokens)} ${tr('tokens')}`),
+      labeled('replyUsage', `${usage.segment_total_tokens == null ? tr('unknown') : n(usage.segment_total_tokens)} / ${n(usage.session_total_tokens)} ${tr('tokens')} (raw)`),
       labeled('latestRequest', `${token(usage.latest_turn_total_tokens)} ${tr('tokens')} ${parenthesized(turnBreakdown)}`),
       labeled('sessionTitle', `${token(usage.session_total_tokens)} ${tr('tokens')}`),
     ];
